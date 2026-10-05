@@ -69,6 +69,10 @@ DEFAULT_CLIENT_URLS = os.getenv(
     "https://client.ind.freefiremobile.com/,https://clientbp.common.ggbluefox.com/"
 )
 FF_PROXY = os.getenv("FF_PROXY", "").strip() or None
+# StartMatch uses a fixed TCP command prefix in the captured Lone Wolf packet.
+# Override only if you have a fresh capture proving a different prefix.
+STARTMATCH_PACKET_PREFIX = os.getenv("FF_STARTMATCH_PREFIX", "031400").strip() or "031400"
+MATCHMAKING_REGION = os.getenv("FF_MATCHMAKING_REGION", "EUROPE").strip() or "EUROPE"
 
 # 🔥 Match control
 START_MATCH_INTERVAL = 3.0
@@ -1007,14 +1011,31 @@ async def send_keep_alive(region="BD"):
         return bytes.fromhex("0219")
 
 
-async def start_game_lone_wolf(region, client_version, writer, key, iv):
+def _startmatch_prefix() -> str:
+    prefix = STARTMATCH_PACKET_PREFIX.lower().replace(" ", "")
+    if len(prefix) != 6:
+        print_warning(f"[LONE WOLF] Invalid FF_STARTMATCH_PREFIX={STARTMATCH_PACKET_PREFIX!r}; using 031400")
+        return "031400"
+    try:
+        bytes.fromhex(prefix)
+        return prefix
+    except ValueError:
+        print_warning(f"[LONE WOLF] Invalid FF_STARTMATCH_PREFIX={STARTMATCH_PACKET_PREFIX!r}; using 031400")
+        return "031400"
+
+
+async def start_game_lone_wolf(matchmaking_region, client_version, writer, key, iv):
     packet = bytes.fromhex("080112800a0a010b102b3a110a044944433110aa011a064555524f50453a100a044944433210311a064555524f504540014a0801090a0b1219202758016291090a8001303838463832424630324139363736373032303130313030303030303030303030303136303030313030313530303032323246393745454530463030303030303436373632353134303030303030303030303030303030303030303030303030303030303030303030303030303066663030303030303030636163666131366410241afb02735d5e571400024a775d45414d1a041b1c001f11010449715f4243481a001e1d071c1703004b1a4066785c524570735c51486775421b5c5a4c07504042685a63610816054e19025e75196001477c015165406370195f5547404e4550640103020f1304064863754268676c755f65576e40467e5f0a417a4701026d675d6e73670b1108495a4c6a0b78470b740065645e525a057258425f584a447d4e6759440c11044e7c596d7f4b625f7d04055a47505c4e1d6b5b4107447d7201057d7f0f14084e430457674f7e517d72015172415d027473577c4d615f79535256780911030f4d5e027a797f614165067806505d53777750475e75064257076500460817014e741e7e5078487e7a7c465e7669767153497064605a7376677773550d160148037e18675966787f4c42607a645f577e7b441b460776026b18685d0b110205490060020f70676175654674706671797f41067346677c4e06585e780f15074c57047b40517075415f6364027259674b5b0166407f7340600407770a22047a5d5c52300b3a0a167305067162727516134208312e3133302e3232480350015ae90403626253513635686e556f4e36416456324b796f566c636f477776484f624e56526c4d727073504b4f43654177616848494176795556497273743752737149734a7a786b3247525268377a2f637664626d504f6a73552f79626d38547a4c69586d2f474351696d494b53486833447955726f39515152756c34545350626d6d624b7949565937545671577059455372323646572f59624578507338514f706d317372785455736c30796a434144444d4f34616a654b615753366361496c554b4963797a494e396d52516f715277687939797257476d337a644345337a6a61436f492f5a585233656f65365a42647a64677654636b6b665733356e4d4c6a6a565072564b6433523172756174394e50514150724a5546627859696c4c5a3859707336654d5447666b6649793574666a526c314d4648706b51774c6373374439656378566c41636f374e664f6d2b30654756466c4434744478706771385533595973587645384842502f70666c767a737138316a32524f4d7857437556445442492f684735625462773166456e4249725162762b636144775147696f74554e316d4c4b77734379456f4766706746614251457645672b736a764c4c78704743334c304a5344532f74526169504354553344374e6249306547516651622f5a466f4c36455630775a324d6f583932414c572f5049752f56634663584e70596b356f7966326151416a536971486a2f363276354843644f525551303578754e6171795251625653704654303137655237675255636b4966366c6f447476342b514e4a4670766d74757077707774396a5a5974437a4b56743657726d6e36785837706658456251555434684f3758a201050803108703a201050804108103a20105080510c001a20105081d10cc01a2010408161078a20105080e10af01a201020815")
     proto = thunderFF_pb2.StartMatch()
     proto.ParseFromString(packet)
-    if hasattr(proto.main, 'region_list') and len(proto.main.region_list) > 0:
-        proto.main.region_list[0].region = region
+    # This captured Lone Wolf packet uses matchmaking shard "EUROPE". Replacing
+    # it with the account lock region (BD/IND/etc.) makes the functional gateway
+    # close immediately after StartMatch. Keep EUROPE by default, but allow an
+    # override for future captures.
+    if matchmaking_region and hasattr(proto.main, 'region_list') and len(proto.main.region_list) > 0:
+        proto.main.region_list[0].region = matchmaking_region
         if len(proto.main.region_list) > 1:
-            proto.main.region_list[1].region = region
+            proto.main.region_list[1].region = matchmaking_region
     if hasattr(proto.main, 'client_version'):
         proto.main.client_version.remote_version = client_version
     packet = proto.SerializeToString()
@@ -1022,14 +1043,11 @@ async def start_game_lone_wolf(region, client_version, writer, key, iv):
     packet_length = len(encrypted_packet) // 2
     hex_length = hex(packet_length)[2:]
     hex_length = hex_length if len(hex_length) > 1 else "0" + hex_length
-    # The old code always used 0314 (IND) even for BD accounts. That mismatch
-    # makes the gateway accept login but ignore/reject StartMatch. Keep packet
-    # region, proto region_list, and gateway prefix aligned.
-    gateway_prefix = f"03{_region_gateway_suffix(region)}00"
+    gateway_prefix = _startmatch_prefix()
     final_packet = gateway_prefix + "0" * (6 - len(hex_length)) + hex_length + encrypted_packet
     writer.write(bytes.fromhex(final_packet))
     await writer.drain()
-    return packet_length, gateway_prefix
+    return packet_length, gateway_prefix, matchmaking_region
 
 async def has_ssan_zig(n):
     z = (n << 1) & 0xFFFFFFFFFFFFFFFF
@@ -1666,16 +1684,20 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                     nonlocal search_attempts, last_start_time
                     search_attempts += 1
                     current_region = effective_region()
-                    print_info(f"[LONE WOLF] Sending StartMatch #{search_attempts} region: {current_region}")
+                    print_info(
+                        f"[LONE WOLF] Sending StartMatch #{search_attempts} "
+                        f"account_region={current_region}, matchmaking_region={MATCHMAKING_REGION}"
+                    )
                     try:
                         await asyncio.sleep(random.uniform(0.3, 0.6))
-                        sent_len, gateway_prefix = await start_game_lone_wolf(
-                            current_region, client_version, writer,
+                        sent_len, gateway_prefix, matchmaking_region = await start_game_lone_wolf(
+                            MATCHMAKING_REGION, client_version, writer,
                             current_key, current_iv
                         )
                         print_success(
                             f"[LONE WOLF] StartMatch packet sent "
-                            f"(region={current_region}, prefix={gateway_prefix}, encrypted={sent_len} bytes)"
+                            f"(account_region={current_region}, matchmaking_region={matchmaking_region}, "
+                            f"prefix={gateway_prefix}, encrypted={sent_len} bytes)"
                         )
                         active = await _get_match_count(uid_str)
                         try:
