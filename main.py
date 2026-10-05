@@ -11,6 +11,7 @@ import os
 import uuid
 import itertools
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple, Any
 from urllib.parse import urlparse
 
@@ -865,6 +866,203 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         print_error(f"[LOGIN] Could not build MajorLogin payload: {e}")
         return None
 
+def _read_pb_varint(buf: bytes, pos: int) -> Tuple[int, int]:
+    shift = 0
+    value = 0
+    while pos < len(buf):
+        b = buf[pos]
+        pos += 1
+        value |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return value, pos
+        shift += 7
+        if shift > 70:
+            raise ValueError("varint too long")
+    raise ValueError("truncated varint")
+
+
+def _scan_wire_fields(buf: bytes, max_fields: int = 240) -> List[Dict[str, Any]]:
+    fields: List[Dict[str, Any]] = []
+    pos = 0
+    try:
+        while pos < len(buf) and len(fields) < max_fields:
+            key, pos = _read_pb_varint(buf, pos)
+            field_no = key >> 3
+            wire = key & 7
+            if field_no <= 0:
+                break
+            item: Dict[str, Any] = {"field": field_no, "wire": wire}
+            if wire == 0:  # varint
+                value, pos = _read_pb_varint(buf, pos)
+                item["value"] = value
+            elif wire == 1:  # fixed64
+                if pos + 8 > len(buf):
+                    break
+                item["raw"] = buf[pos:pos + 8]
+                pos += 8
+            elif wire == 2:  # length-delimited
+                length, pos = _read_pb_varint(buf, pos)
+                if length < 0 or pos + length > len(buf):
+                    break
+                raw = buf[pos:pos + length]
+                pos += length
+                item["raw"] = raw
+                try:
+                    text = raw.decode("utf-8")
+                    if all((ch.isprintable() or ch in "\r\n\t") for ch in text):
+                        item["text"] = text
+                except Exception:
+                    pass
+            elif wire == 5:  # fixed32
+                if pos + 4 > len(buf):
+                    break
+                item["raw"] = buf[pos:pos + 4]
+                pos += 4
+            else:
+                break
+            fields.append(item)
+    except Exception:
+        pass
+    return fields
+
+
+def _decode_jwt_payload(token: str) -> Dict[str, Any]:
+    try:
+        import base64
+        parts = str(token).split('.')
+        if len(parts) < 2:
+            return {}
+        payload = parts[1]
+        payload += '=' * ((4 - len(payload) % 4) % 4)
+        decoded = base64.urlsafe_b64decode(payload.encode())
+        data = json.loads(decoded.decode("utf-8", errors="ignore"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _looks_like_jwt(text: str) -> bool:
+    text = str(text or "")
+    return text.startswith("eyJ") and text.count('.') >= 2 and len(text) > 80
+
+
+def _looks_like_region(text: str) -> bool:
+    text = str(text or "").strip().upper()
+    return 2 <= len(text) <= 8 and text.replace("_", "").isalpha()
+
+
+def _majorlogin_from_wire_fields(fields: List[Dict[str, Any]]) -> Optional[Any]:
+    texts = [(f["field"], f.get("text", ""), f.get("raw", b"")) for f in fields if f.get("text")]
+    varints = [(f["field"], int(f.get("value", 0))) for f in fields if f.get("wire") == 0]
+
+    token = ""
+    url = ""
+    region = ""
+    for field_no, text, _raw in texts:
+        if not token and _looks_like_jwt(text):
+            token = text
+        if not url and text.startswith("http") and "client" in text:
+            url = text
+        if not region and _looks_like_region(text) and text.upper() not in {"FREE", "FIRE", "ANDROID", "WIFI"}:
+            # Prefer the historical MajorLogin region field, but allow fallback.
+            if field_no == 2 or text.upper() in {"BD", "IND", "IN", "SG", "TH", "VN", "ID", "MY", "PK", "BR", "US", "EU", "ME"}:
+                region = "IND" if text.upper() == "IN" else text.upper()
+
+    # Prefer known fields first, then fall back to sane candidates.
+    account_id = 0
+    server_time = 0
+    for field_no, value in varints:
+        if field_no == 1 and value > 0:
+            account_id = value
+        if field_no == 21 and value > 0:
+            server_time = value
+    if not account_id:
+        for _field_no, value in varints:
+            if value > 1_000_000:
+                account_id = value
+                break
+    if not server_time:
+        now_year_2020 = 1_577_836_800
+        for _field_no, value in varints:
+            if now_year_2020 <= value <= 4_102_444_800:
+                server_time = value
+                break
+
+    # AES key and IV are known historical fields 22 and 23, both 16 bytes. If
+    # field numbers drift, pick the first two 16-byte non-text byte fields.
+    aes_ak = b""
+    iv_i = b""
+    sixteen_byte_fields = []
+    for f in fields:
+        raw = f.get("raw")
+        if f.get("wire") == 2 and isinstance(raw, (bytes, bytearray)) and len(raw) == 16:
+            sixteen_byte_fields.append((f["field"], bytes(raw)))
+            if f["field"] == 22:
+                aes_ak = bytes(raw)
+            elif f["field"] == 23:
+                iv_i = bytes(raw)
+    if not aes_ak and sixteen_byte_fields:
+        aes_ak = sixteen_byte_fields[0][1]
+    if not iv_i and len(sixteen_byte_fields) > 1:
+        iv_i = sixteen_byte_fields[1][1]
+
+    if token and not account_id:
+        payload = _decode_jwt_payload(token)
+        for key in ("account_id", "accountId", "uid", "sub"):
+            try:
+                if payload.get(key):
+                    account_id = int(str(payload[key]).strip())
+                    break
+            except Exception:
+                pass
+        if not region:
+            for key in ("lockRegion", "lock_region", "region"):
+                if payload.get(key):
+                    region = str(payload[key]).upper()
+                    break
+
+    if token and url and region and aes_ak and iv_i:
+        return SimpleNamespace(
+            account_id=account_id,
+            region=region,
+            token=token,
+            url=url,
+            server_time=server_time or int(time.time()),
+            aes_ak=aes_ak,
+            iv_i=iv_i,
+        )
+    return None
+
+
+def _majorlogin_response_summary(response_content: bytes) -> str:
+    offset = 64 if len(response_content) > 64 else 0
+    fields = _scan_wire_fields(response_content[offset:])
+    if not fields:
+        return f"bytes={len(response_content)}, no decodable protobuf fields"
+    parts = []
+    for f in fields[:18]:
+        if f.get("wire") == 0:
+            parts.append(f"{f['field']}:varint")
+        elif f.get("wire") == 2:
+            raw = f.get("raw", b"")
+            text = f.get("text", "")
+            if _looks_like_jwt(text):
+                parts.append(f"{f['field']}:jwt(len={len(text)})")
+            elif text.startswith("http"):
+                parts.append(f"{f['field']}:url")
+            elif text and len(text) <= 16:
+                parts.append(f"{f['field']}:str({text})")
+            else:
+                parts.append(f"{f['field']}:bytes({len(raw)})")
+        else:
+            parts.append(f"{f['field']}:wire{f.get('wire')}")
+    hint = ""
+    field_numbers = {f.get("field") for f in fields}
+    if 13 in field_numbers:
+        hint = " | field 13 present: MajorLogin returned tokenless status; account may be unregistered/banned or payload rejected"
+    return f"bytes={len(response_content)}, offset={offset}, fields=[{', '.join(parts)}]{hint}"
+
+
 def _parse_majorlogin_response(response_content: bytes) -> Optional[Any]:
     # OB55 responses observed in the wild use a 64-byte prefix. Keep dynamic
     # fallback offsets because routing variants sometimes differ.
@@ -877,13 +1075,19 @@ def _parse_majorlogin_response(response_content: bytes) -> Optional[Any]:
     for offset in _unique_keep_order(offsets):
         if offset >= len(response_content):
             continue
+        payload = response_content[offset:]
         try:
             candidate = thunderFF_pb2.MajorLoginRes()
-            candidate.ParseFromString(response_content[offset:])
+            candidate.ParseFromString(payload)
             if candidate.region and candidate.token and candidate.url:
                 return candidate
         except Exception:
             pass
+
+        fields = _scan_wire_fields(payload)
+        dynamic = _majorlogin_from_wire_fields(fields)
+        if dynamic:
+            return dynamic
     return None
 
 
@@ -913,7 +1117,8 @@ async def send_majorlogin(data, release_version, server_url):
                 print_success(f"[MAJORLOGIN] Login OK for account {parsed.account_id} ({parsed.region}) via {_host_from_url(url)}")
                 return parsed
 
-            last_error = f"{_host_from_url(url)} response did not contain token/region/server URL"
+            summary = _majorlogin_response_summary(response_content)
+            last_error = f"{_host_from_url(url)} response did not contain token/region/server URL ({summary})"
             print_warning(f"[MAJORLOGIN] {last_error}")
         except Exception as e:
             last_error = f"{_host_from_url(url)}: {e}"
