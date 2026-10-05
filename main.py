@@ -68,6 +68,7 @@ DEFAULT_CLIENT_URLS = os.getenv(
     "https://clientbp.ppmainecoonghj.com/,https://clientbp.ggpolarbear.com/,"
     "https://client.ind.freefiremobile.com/,https://clientbp.common.ggbluefox.com/"
 )
+FF_PROXY = os.getenv("FF_PROXY", "").strip() or None
 
 # 🔥 Match control
 START_MATCH_INTERVAL = 3.0
@@ -247,7 +248,9 @@ def optimize_udp_socket(sock: socket.socket):
 # ==================== NETWORK & CRYPTO ====================
 client = httpx.AsyncClient(
     verify=False,
-    timeout=10.0,
+    timeout=15.0,
+    proxy=FF_PROXY,
+    trust_env=True,
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=50)
 )
 
@@ -510,6 +513,23 @@ def _unique_keep_order(values: List[str]) -> List[str]:
     return result
 
 
+def _tls_block_hint(error_text: str) -> str:
+    lowered = str(error_text or "").lower()
+    tls_closed = (
+        "tls/ssl connection has been closed" in lowered
+        or "ssl_error_syscall" in lowered
+        or "connection closed abruptly" in lowered
+        or "empty reply from server" in lowered
+    )
+    if not tls_closed:
+        return ""
+    return (
+        " Garena closed TLS before any HTTP response. This is usually a blocked/cloud IP "
+        "or network route issue, not a wrong UID/password. Try from Termux/local network "
+        "or set FF_PROXY=http://user:pass@host:port (SOCKS also works after installing requirements)."
+    )
+
+
 def _normalize_base_url(url: str, fallback: str = DEFAULT_MAJOR_LOGIN_URL) -> str:
     """Return a safe base URL with scheme and trailing slash."""
     value = str(url or fallback or "").strip()
@@ -707,7 +727,7 @@ async def get_access_token(uid, password):
                 print_warning(f"[TOKEN] Attempt {attempt}/3 network error on {_host_from_url(url)}: {e}")
             await asyncio.sleep(min(3, 0.5 * attempt))
 
-    print_error(f"[TOKEN] Could not get guest token for UID {uid}. Last error: {last_error}")
+    print_error(f"[TOKEN] Could not get guest token for UID {uid}. Last error: {last_error}{_tls_block_hint(last_error)}")
     return None
 
 
@@ -744,7 +764,7 @@ async def inspect_access_token(access_token: str) -> Optional[Tuple[str, Any]]:
         except Exception as e:
             last_error = f"{_host_from_url(url)}: {e}"
             print_warning(f"[TOKEN] Token inspect network error on {_host_from_url(url)}: {e}")
-    print_error(f"[TOKEN] Could not inspect access token. Last error: {last_error}")
+    print_error(f"[TOKEN] Could not inspect access token. Last error: {last_error}{_tls_block_hint(last_error)}")
     return None
 
 async def parse_results(parsed_results):
@@ -895,7 +915,7 @@ async def send_majorlogin(data, release_version, server_url):
             last_error = f"{_host_from_url(url)}: {e}"
             print_warning(f"[MAJORLOGIN] Request failed on {_host_from_url(url)}: {e}")
 
-    print_error(f"[MAJORLOGIN] All endpoints failed. Last error: {last_error}")
+    print_error(f"[MAJORLOGIN] All endpoints failed. Last error: {last_error}{_tls_block_hint(last_error)}")
     return None
 
 async def send_getlogin(data, base_url, token, release_version):
@@ -954,7 +974,7 @@ async def send_getlogin(data, base_url, token, release_version):
             last_error = f"{_host_from_url(safe_base)}: {e}"
             print_warning(f"[GETLOGIN] Request failed on {_host_from_url(safe_base)}: {e}")
 
-    print_error(f"[GETLOGIN] All endpoints failed. Last error: {last_error}")
+    print_error(f"[GETLOGIN] All endpoints failed. Last error: {last_error}{_tls_block_hint(last_error)}")
     return None
 
 async def build_tcp_startup_packet(account_id, token, server_time, key, iv, region="BD", typ='OnLine'):
@@ -2432,6 +2452,8 @@ async def main():
     print_info(f"Cache TTL: {TOKEN_CACHE_TTL}s ({TOKEN_CACHE_TTL//60} min)")
     print_info(f"Priority Regions: {PRIORITY_REGIONS}")
     print_info("Device System: 1 ID = 1 Persistent Device ID (devices.json)")
+    if FF_PROXY:
+        print_info("Network Proxy: enabled via FF_PROXY")
     print_colored("=" * 60, Colors.CYAN)
 
     dashboard_runner = None
