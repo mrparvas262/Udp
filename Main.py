@@ -12,6 +12,7 @@ import uuid
 import itertools
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
+from urllib.parse import urlparse
 
 if sys.platform == "win32":
     try:
@@ -41,6 +42,13 @@ ACCOUNTS_FILE = os.path.join(BASE_DIR, "accounts.json")
 TOKEN_CACHE_FILE = os.path.join(BASE_DIR, "token_cache.json")
 DEVICES_FILE = os.path.join(BASE_DIR, "devices.json")  # 🔥 Persistent device storage
 TOKEN_CACHE_TTL = 1200
+
+# Runtime login/version fallbacks. Environment variables let you update these
+# without editing code when the game bumps version or endpoint hosts.
+DEFAULT_RELEASE_VERSION = os.getenv("FF_RELEASE_VERSION", "OB55")
+DEFAULT_CLIENT_VERSION = os.getenv("FF_CLIENT_VERSION", "1.132.3")
+DEFAULT_APP_VERSION = os.getenv("FF_APP_VERSION", DEFAULT_CLIENT_VERSION)
+DEFAULT_MAJOR_LOGIN_URL = os.getenv("FF_MAJOR_LOGIN_URL", "https://loginbp.ppmainecoonghj.com/")
 
 # 🔥 Match control
 START_MATCH_INTERVAL = 3.0
@@ -233,7 +241,7 @@ headers = {
     'X-Unity-Version': '2018.4.12f1',
     'X-GA-SV': '1789535859',
     'X-GA': 'v1 1',
-    'ReleaseVersion': 'OB55'
+    'ReleaseVersion': DEFAULT_RELEASE_VERSION
 }
 
 AES_KEY = b'Yg&tc%DEuh6%Zc^8'
@@ -282,7 +290,7 @@ headers = {
     'X-Unity-Version': '2018.4.12f1',
     'X-GA-SV': '1789535859',
     'X-GA': 'v1 1',
-    'ReleaseVersion': 'OB55'
+    'ReleaseVersion': DEFAULT_RELEASE_VERSION
 }
 
 class Colors:
@@ -469,13 +477,39 @@ async def aes_encrypt(payload, key, iv):
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return cipher.encrypt(pad(payload, AES.block_size))
 
+def _normalize_base_url(url: str, fallback: str = DEFAULT_MAJOR_LOGIN_URL) -> str:
+    """Return a safe base URL with scheme and trailing slash."""
+    value = str(url or fallback or "").strip()
+    if not value:
+        value = DEFAULT_MAJOR_LOGIN_URL
+    if not value.startswith(("http://", "https://")):
+        value = "https://" + value.lstrip("/")
+    return value.rstrip("/") + "/"
+
+
+def _host_from_url(url: str, fallback: str = "clientbp.ppmainecoonghj.com") -> str:
+    try:
+        parsed = urlparse(_normalize_base_url(url))
+        return parsed.netloc or fallback
+    except Exception:
+        return fallback
+
+
 async def get_playstore_version():
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: play_scraper('com.dts.freefireth', lang='hi', country='id')
-    )
-    return result.get("version")
+    try:
+        result = await loop.run_in_executor(
+            None,
+            lambda: play_scraper('com.dts.freefireth', lang='hi', country='id')
+        )
+        version = result.get("version") if isinstance(result, dict) else None
+        if version:
+            return version
+        print_warning(f"[VERSION] Play Store response missing version. Using fallback {DEFAULT_APP_VERSION}")
+    except Exception as e:
+        print_warning(f"[VERSION] Play Store lookup failed: {e}. Using fallback {DEFAULT_APP_VERSION}")
+    return DEFAULT_APP_VERSION
+
 
 async def version_config():
     app_version = await get_playstore_version()
@@ -493,11 +527,20 @@ async def version_config():
         server_url = data.get("server_url")
         remote_version = data.get("remote_version")
         latest_release_version = data.get("latest_release_version")
-        if not server_url or not remote_version or not latest_release_version:
-            return None
-        return latest_release_version, remote_version, server_url
-    except Exception:
-        return None
+        if server_url and remote_version and latest_release_version:
+            server_url = _normalize_base_url(server_url)
+            print_info(f"[VERSION] Release {latest_release_version}, client {remote_version}, login {server_url}")
+            return latest_release_version, remote_version, server_url
+        print_warning(f"[VERSION] Config response incomplete: {data}")
+    except Exception as e:
+        print_warning(f"[VERSION] Remote config failed: {e}")
+
+    fallback_url = _normalize_base_url(DEFAULT_MAJOR_LOGIN_URL)
+    print_warning(
+        f"[VERSION] Using fallback config: {DEFAULT_RELEASE_VERSION}, "
+        f"client {DEFAULT_CLIENT_VERSION}, login {fallback_url}"
+    )
+    return DEFAULT_RELEASE_VERSION, DEFAULT_CLIENT_VERSION, fallback_url
 
 async def get_access_token(uid, password):
     url = "https://100067.connect.garena.com/oauth/guest/token/grant"
@@ -516,7 +559,8 @@ async def get_access_token(uid, password):
         "client_secret": "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
         "client_id": "100067"
     }
-    for attempt in range(5):
+    last_error = "unknown"
+    for attempt in range(1, 6):
         try:
             response = await client.post(url, headers=hdrs, data=data)
             if response.status_code == 200:
@@ -525,13 +569,28 @@ async def get_access_token(uid, password):
                 access_token = response_data.get("access_token")
                 platform = response_data.get("platform", 4)
                 if open_id and access_token:
+                    print_success(f"[TOKEN] Guest token granted for UID {uid}")
                     return open_id, access_token, platform
+                last_error = f"token response missing open_id/access_token: {response_data}"
+                print_warning(f"[TOKEN] {last_error}")
+                break
+
+            body_preview = response.text[:180].replace("\n", " ")
+            last_error = f"HTTP {response.status_code}: {body_preview}"
+            if response.status_code in (400, 401, 403):
+                print_error(f"[TOKEN] Guest login rejected for UID {uid}: {last_error}")
+                break
             if response.status_code == 429:
-                await asyncio.sleep(1)
+                print_warning(f"[TOKEN] Rate limited for UID {uid}; retry {attempt}/5")
+                await asyncio.sleep(min(6, attempt * 1.5))
                 continue
-        except Exception:
-            pass
-        await asyncio.sleep(0.5)
+            print_warning(f"[TOKEN] Attempt {attempt}/5 failed for UID {uid}: {last_error}")
+        except Exception as e:
+            last_error = str(e)
+            print_warning(f"[TOKEN] Attempt {attempt}/5 network error for UID {uid}: {e}")
+        await asyncio.sleep(min(3, 0.5 * attempt))
+
+    print_error(f"[TOKEN] Could not get guest token for UID {uid}. Last error: {last_error}")
     return None
 
 async def parse_results(parsed_results):
@@ -624,19 +683,28 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         
         payload = proto.SerializeToString()
         return await aes_encrypt(payload, AES_KEY, AES_IV)
-    except Exception:
+    except Exception as e:
+        print_error(f"[LOGIN] Could not build MajorLogin payload: {e}")
         return None
 
 async def send_majorlogin(data, release_version, server_url):
+    if not data:
+        print_error("[MAJORLOGIN] Empty encrypted payload; cannot login")
+        return None
     try:
-        url = f"{server_url}MajorLogin"
+        base_url = _normalize_base_url(server_url)
+        url = f"{base_url}MajorLogin"
         req_headers = headers.copy()
-        req_headers["ReleaseVersion"] = release_version
+        req_headers["ReleaseVersion"] = release_version or DEFAULT_RELEASE_VERSION
+        req_headers["Host"] = _host_from_url(base_url, "loginbp.ppmainecoonghj.com")
         response = await client.post(url, headers=req_headers, data=data)
         if response.status_code != 200:
+            preview = response.text[:180].replace("\n", " ")
+            print_error(f"[MAJORLOGIN] HTTP {response.status_code} from {url}: {preview}")
             return None
         response_content = response.content
         if len(response_content) < 40:
+            print_error(f"[MAJORLOGIN] Short response ({len(response_content)} bytes) from {url}")
             return None
 
         # 1. Direct parse
@@ -644,6 +712,7 @@ async def send_majorlogin(data, release_version, server_url):
         try:
             res_proto.ParseFromString(response_content)
             if res_proto.region and res_proto.token:
+                print_success(f"[MAJORLOGIN] Login OK for account {res_proto.account_id} ({res_proto.region})")
                 return res_proto
         except Exception:
             pass
@@ -654,6 +723,7 @@ async def send_majorlogin(data, release_version, server_url):
                 res_proto = thunderFF_pb2.MajorLoginRes()
                 res_proto.ParseFromString(response_content[64:])
                 if res_proto.region and res_proto.token:
+                    print_success(f"[MAJORLOGIN] Login OK for account {res_proto.account_id} ({res_proto.region})")
                     return res_proto
             except Exception:
                 pass
@@ -664,25 +734,41 @@ async def send_majorlogin(data, release_version, server_url):
                 candidate = thunderFF_pb2.MajorLoginRes()
                 candidate.ParseFromString(response_content[offset:])
                 if candidate.region and candidate.token:
+                    print_success(f"[MAJORLOGIN] Login OK for account {candidate.account_id} ({candidate.region})")
                     return candidate
             except Exception:
                 pass
 
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        res_proto.ParseFromString(response_content)
-        return res_proto
-    except Exception:
+        try:
+            res_proto = thunderFF_pb2.MajorLoginRes()
+            res_proto.ParseFromString(response_content)
+            if res_proto.token:
+                return res_proto
+        except Exception as parse_error:
+            print_error(f"[MAJORLOGIN] Could not parse response: {parse_error}")
+            return None
+
+        print_error("[MAJORLOGIN] Response parsed but token/region missing")
+        return None
+    except Exception as e:
+        print_error(f"[MAJORLOGIN] Request failed: {e}")
         return None
 
 async def send_getlogin(data, base_url, token, release_version):
+    if not data or not token:
+        print_error("[GETLOGIN] Missing payload or bearer token")
+        return None
     try:
-        url = f"{base_url.rstrip('/')}/GetLoginData"
+        safe_base = _normalize_base_url(base_url)
+        url = f"{safe_base.rstrip('/')}/GetLoginData"
         req_headers = headers.copy()
-        req_headers["ReleaseVersion"] = release_version
+        req_headers["ReleaseVersion"] = release_version or DEFAULT_RELEASE_VERSION
         req_headers['Authorization'] = f"Bearer {token}"
-        req_headers['Host'] = "clientbp.ppmainecoonghj.com"
+        req_headers['Host'] = _host_from_url(safe_base)
         response = await client.post(url, headers=req_headers, data=data)
         if response.status_code != 200:
+            preview = response.text[:180].replace("\n", " ")
+            print_error(f"[GETLOGIN] HTTP {response.status_code} from {url}: {preview}")
             return None
         response_content = response.content
 
@@ -702,6 +788,7 @@ async def send_getlogin(data, base_url, token, release_version):
                     candidate.ParseFromString(response_content[offset:])
                     if candidate.functional_addrs or candidate.informational_addrs:
                         res_proto = candidate
+                        parsed_successfully = True
                         break
                 except Exception:
                     pass
@@ -713,8 +800,11 @@ async def send_getlogin(data, base_url, token, release_version):
         except Exception:
             pass
 
+        if not parsed_successfully:
+            print_warning("[GETLOGIN] Parsed fallback fields only; gateway addresses may be missing")
         return res_proto, dict_res
-    except Exception:
+    except Exception as e:
+        print_error(f"[GETLOGIN] Request failed: {e}")
         return None
 
 async def build_tcp_startup_packet(account_id, token, server_time, key, iv, region="BD", typ='OnLine'):
@@ -1798,11 +1888,13 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
     try:
         verconfig_res = await version_config()
         if verconfig_res is None:
+            print_error(f"[LOGIN] Version configuration unavailable for UID {uid}")
             return None
         release_version, client_version, server_url = verconfig_res
         
         tokengrant_response = await get_access_token(uid, password)
         if tokengrant_response is None:
+            print_error(f"[LOGIN] Guest token step failed for UID {uid}")
             return None
         open_id, access_token, platform = tokengrant_response
         
@@ -1810,11 +1902,18 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
         device_info = get_device_for_account(uid)
         
         login_payload_data = await build_majorlogin_payload(open_id, access_token, platform, client_version, device_info)
+        if not login_payload_data:
+            return None
         majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
         if majorlogin_response is None:
+            print_error(f"[LOGIN] MajorLogin step failed for UID {uid}")
+            return None
+        if not majorlogin_response.token or not majorlogin_response.url:
+            print_error(f"[LOGIN] MajorLogin response missing token/server URL for UID {uid}")
             return None
         getlogin_result = await send_getlogin(login_payload_data, majorlogin_response.url, majorlogin_response.token, release_version)
         if getlogin_result is None:
+            print_error(f"[LOGIN] GetLoginData step failed for UID {uid}")
             return None
         res_proto, dict_res = getlogin_result
 
@@ -1880,10 +1979,10 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
     try:
         verconfig_res = await version_config()
         if verconfig_res is None:
+            print_error("[LOGIN] Version configuration unavailable for access-token login")
             return None
         release_version, client_version, server_url = verconfig_res
 
-        import requests
         url = f"https://100067.connect.garena.com/oauth/token/inspect?token={access_token}"
         hdrs = {
             "Accept-Encoding": "gzip, deflate, br",
@@ -1892,16 +1991,21 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
             "Host": "100067.connect.garena.com",
             "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 9;en;US;)"
         }
-        resp = await asyncio.to_thread(requests.get, url, headers=hdrs, timeout=10)
+        resp = await client.get(url, headers=hdrs)
+        if resp.status_code != 200:
+            print_error(f"[TOKEN] Token inspect failed: HTTP {resp.status_code} {resp.text[:160]}")
+            return None
         data = resp.json()
 
         if 'error' in data:
+            print_error(f"[TOKEN] Access token rejected: {data.get('error')}")
             return None
 
         open_id = data.get('open_id')
         platform = data.get('platform', 4)
 
         if not open_id:
+            print_error(f"[TOKEN] Token inspect missing open_id: {data}")
             return None
 
         # 🔥 1ta id 1ta Device Injection (using unique open_id as the key)
@@ -1913,6 +2017,10 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
 
         majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
         if majorlogin_response is None:
+            print_error("[LOGIN] MajorLogin step failed for access-token login")
+            return None
+        if not majorlogin_response.token or not majorlogin_response.url:
+            print_error("[LOGIN] MajorLogin response missing token/server URL for access-token login")
             return None
 
         getlogin_result = await send_getlogin(
@@ -1922,6 +2030,7 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
             release_version
         )
         if getlogin_result is None:
+            print_error("[LOGIN] GetLoginData step failed for access-token login")
             return None
 
         res_proto, dict_res = getlogin_result
