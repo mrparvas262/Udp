@@ -977,26 +977,32 @@ async def send_getlogin(data, base_url, token, release_version):
     print_error(f"[GETLOGIN] All endpoints failed. Last error: {last_error}{_tls_block_hint(last_error)}")
     return None
 
+def _region_gateway_suffix(region: Any) -> str:
+    """Gateway packet suffix used by TCP/Lone Wolf packets for each lock region."""
+    reg = str(region or "BD").upper()
+    if reg == "BD":
+        return "19"
+    if reg in {"IND", "IN"}:
+        return "14"
+    return "15"
+
+
 async def build_tcp_startup_packet(account_id, token, server_time, key, iv, region="BD", typ='OnLine'):
     uid_hex = f"{int(account_id):016x}"
     timestamp_hex = f"{int(server_time):08x}"
     encode_token = token.encode()
     encrypted_packet = (await aes_encrypt(encode_token, key, iv)).hex()
     encrypted_packet_length = f"{len(encrypted_packet) // 2:08x}"
-    reg = str(region).upper() if region else "BD"
+    suffix = _region_gateway_suffix(region)
     if typ == 'OnLine':
-        prefix = '7119' if reg == 'BD' else ('7114' if reg == 'IND' else '7115')
-        return f"{prefix}{uid_hex}{timestamp_hex}00000000{encrypted_packet_length}{encrypted_packet}"
+        return f"71{suffix}{uid_hex}{timestamp_hex}00000000{encrypted_packet_length}{encrypted_packet}"
     else:  # ChaT / Informational
-        prefix = '9219' if reg == 'BD' else ('9214' if reg == 'IND' else '9215')
-        return f"{prefix}{uid_hex}{timestamp_hex}{encrypted_packet_length}{encrypted_packet}"
+        return f"92{suffix}{uid_hex}{timestamp_hex}{encrypted_packet_length}{encrypted_packet}"
 
 async def send_keep_alive(region="BD"):
     """Send 2-byte keep-alive pulse to maintain connection in OB55"""
     try:
-        reg = str(region).upper() if region else "BD"
-        ka_hex = "0219" if reg == "BD" else ("0214" if reg == "IND" else "0215")
-        return bytes.fromhex(ka_hex)
+        return bytes.fromhex(f"02{_region_gateway_suffix(region)}")
     except Exception:
         return bytes.fromhex("0219")
 
@@ -1016,9 +1022,14 @@ async def start_game_lone_wolf(region, client_version, writer, key, iv):
     packet_length = len(encrypted_packet) // 2
     hex_length = hex(packet_length)[2:]
     hex_length = hex_length if len(hex_length) > 1 else "0" + hex_length
-    final_packet = "031400" + "0" * (6 - len(hex_length)) + hex_length + encrypted_packet
+    # The old code always used 0314 (IND) even for BD accounts. That mismatch
+    # makes the gateway accept login but ignore/reject StartMatch. Keep packet
+    # region, proto region_list, and gateway prefix aligned.
+    gateway_prefix = f"03{_region_gateway_suffix(region)}00"
+    final_packet = gateway_prefix + "0" * (6 - len(hex_length)) + hex_length + encrypted_packet
     writer.write(bytes.fromhex(final_packet))
     await writer.drain()
+    return packet_length, gateway_prefix
 
 async def has_ssan_zig(n):
     z = (n << 1) & 0xFFFFFFFFFFFFFFFF
@@ -1629,9 +1640,11 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                 writer.write(bytes.fromhex(current_token))
                 await writer.drain()
 
-                # Send initial keepalive pulse right after connecting in OB55
+                # Send initial keepalive pulse right after connecting in OB55.
+                # Use the same lock region that StartMatch will use.
                 try:
-                    init_ka = await send_keep_alive(account_region)
+                    ka_region = str((current_account_data or {}).get('region') or account_region or "BD").upper()
+                    init_ka = await send_keep_alive(ka_region)
                     if init_ka and writer and not writer.is_closing():
                         writer.write(init_ka)
                         await asyncio.wait_for(writer.drain(), timeout=3)
@@ -1643,18 +1656,27 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                 no_response_count = 0
                 last_start_time = 0.0
 
+                def effective_region() -> str:
+                    region = account_region
+                    if current_account_data:
+                        region = current_account_data.get('region') or region
+                    return str(region or "BD").upper()
+
                 async def send_start_match():
                     nonlocal search_attempts, last_start_time
                     search_attempts += 1
-                    current_region = "BD"
+                    current_region = effective_region()
                     print_info(f"[LONE WOLF] Sending StartMatch #{search_attempts} region: {current_region}")
                     try:
                         await asyncio.sleep(random.uniform(0.3, 0.6))
-                        await start_game_lone_wolf(
+                        sent_len, gateway_prefix = await start_game_lone_wolf(
                             current_region, client_version, writer,
                             current_key, current_iv
                         )
-                        print_success("[LONE WOLF] StartMatch packet sent")
+                        print_success(
+                            f"[LONE WOLF] StartMatch packet sent "
+                            f"(region={current_region}, prefix={gateway_prefix}, encrypted={sent_len} bytes)"
+                        )
                         active = await _get_match_count(uid_str)
                         try:
                             bot_state.update_status(uid_str, "SEARCHING", active)
@@ -1737,10 +1759,11 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                 acc_tok = ""
                                 if current_account_data:
                                     acc_tok = current_account_data.get('access_token', '') or ""
+                                match_region = effective_region()
                                 thunder, sharma = await build_match_startup_packets(
                                     token, udp_key, match_code, effective_acc_id, block_val or 0,
                                     server_ip=server_ip_port,
-                                    region=account_region,
+                                    region=match_region,
                                     client_version=client_version,
                                     access_token=acc_tok
                                 )
@@ -1764,7 +1787,7 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                         udp_key,
                                         match_code,
                                         effective_acc_id,
-                                        "BD",
+                                        match_region,
                                         client_version,
                                         current_key,
                                         current_iv,
