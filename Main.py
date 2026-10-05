@@ -34,11 +34,12 @@ import thunderFF_pb2
 from dashboard_server import bot_state, start_web_dashboard
 
 # ==================== CONFIGURATION ====================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 20335
-ACCOUNTS_FILE = "accounts.json"
-TOKEN_CACHE_FILE = "token_cache.json"
-DEVICES_FILE = "devices.json"  # 🔥 NEW: Persistent device storage
+ACCOUNTS_FILE = os.path.join(BASE_DIR, "accounts.json")
+TOKEN_CACHE_FILE = os.path.join(BASE_DIR, "token_cache.json")
+DEVICES_FILE = os.path.join(BASE_DIR, "devices.json")  # 🔥 Persistent device storage
 TOKEN_CACHE_TTL = 1200
 
 # 🔥 Match control
@@ -1701,6 +1702,27 @@ async def informational(addrs, starter_packet, key, iv, region="BD", max_reconne
 
 # ==================== ACCOUNT PROCESSORS ====================
 
+def _track_worker_aliases(task: Optional[asyncio.Task], *aliases: Any):
+    """Map every useful user/account id to the same running worker task."""
+    if task is None:
+        return
+    for alias in aliases:
+        if alias is None:
+            continue
+        key = str(alias).strip()
+        if key:
+            bot_state.account_workers[key] = task
+
+
+def _forget_worker_aliases(task: Optional[asyncio.Task]):
+    """Remove stale aliases when a worker exits or is cancelled."""
+    if task is None:
+        return
+    for key, worker in list(bot_state.account_workers.items()):
+        if worker is task:
+            bot_state.account_workers.pop(key, None)
+
+
 def _register_credentials(account_data: Dict):
     try:
         acc_id = str(account_data['account_id'])
@@ -1708,7 +1730,10 @@ def _register_credentials(account_data: Dict):
         if account_data.get('auth_uid'):
             bot_state.account_credentials[str(account_data['auth_uid'])] = account_data
         if account_data.get('auth_token'):
-            bot_state.account_credentials[f"tok_{account_data['auth_token'][:20]}"] = account_data
+            auth_token = str(account_data['auth_token'])
+            bot_state.account_credentials[auth_token] = account_data
+            bot_state.account_credentials[auth_token[:10]] = account_data
+            bot_state.account_credentials[f"tok_{auth_token[:20]}"] = account_data
     except Exception:
         pass
 
@@ -1945,8 +1970,16 @@ async def run_account_worker(account_data: Dict, label: str):
     acc_id = str(account_data['account_id'])
     informational_task = None
     exp_task = None
+    functional_task = None
     try:
         reg = account_data.get('region', 'BD')
+        functional_addrs = str(account_data.get('functional_addrs') or '').strip()
+        informational_addrs = str(account_data.get('informational_addrs') or '').strip()
+        if ':' not in functional_addrs:
+            raise ConnectionError(f"Missing functional gateway address for {label}")
+
+        bot_state.update_status(acc_id, "ONLINE", 0)
+
         tcp_packet_online = await build_tcp_startup_packet(
             account_data['account_id'],
             account_data['token'],
@@ -1957,25 +1990,28 @@ async def run_account_worker(account_data: Dict, label: str):
             typ='OnLine'
         )
 
-        tcp_packet_chat = await build_tcp_startup_packet(
-            account_data['account_id'],
-            account_data['token'],
-            account_data['server_time'],
-            account_data['aes_ak'],
-            account_data['iv_i'],
-            region=reg,
-            typ='ChaT'
-        )
-
-        informational_task = asyncio.create_task(
-            informational(
-                account_data['informational_addrs'],
-                tcp_packet_chat,
+        tcp_packet_chat = None
+        if ':' in informational_addrs:
+            tcp_packet_chat = await build_tcp_startup_packet(
+                account_data['account_id'],
+                account_data['token'],
+                account_data['server_time'],
                 account_data['aes_ak'],
                 account_data['iv_i'],
-                region=reg
+                region=reg,
+                typ='ChaT'
             )
-        )
+            informational_task = asyncio.create_task(
+                informational(
+                    informational_addrs,
+                    tcp_packet_chat,
+                    account_data['aes_ak'],
+                    account_data['iv_i'],
+                    region=reg
+                )
+            )
+        else:
+            print_warning(f"[INFO] Missing informational gateway for {label}; continuing without chat socket")
 
         async def exp_refresher():
             while True:
@@ -1988,7 +2024,7 @@ async def run_account_worker(account_data: Dict, label: str):
 
         functional_task = asyncio.create_task(
             functional_lone_wolf(
-                account_data['functional_addrs'],
+                functional_addrs,
                 tcp_packet_online,
                 account_data['region'],
                 account_data['client_version'],
@@ -2002,14 +2038,22 @@ async def run_account_worker(account_data: Dict, label: str):
         await functional_task
 
     except asyncio.CancelledError:
+        try:
+            bot_state.update_status(acc_id, "OFFLINE", 0)
+        except Exception:
+            pass
         raise
     except Exception as e:
+        try:
+            bot_state.update_status(acc_id, "ERROR", 0)
+        except Exception:
+            pass
         print_error(f"run_account_worker error for {label}: {e}")
     finally:
-        for t in (informational_task, exp_task):
+        for t in (informational_task, exp_task, functional_task):
             if t and not t.done():
                 t.cancel()
-        for t in (informational_task, exp_task):
+        for t in (informational_task, exp_task, functional_task):
             if t:
                 try:
                     await t
@@ -2018,59 +2062,85 @@ async def run_account_worker(account_data: Dict, label: str):
 
 
 async def account_loop_guest(uid: str, password: str):
-    while True:
-        try:
-            print_info(f"[LOGIN] Starting login for Guest UID: {uid}...")
+    current_task = asyncio.current_task()
+    _track_worker_aliases(current_task, uid)
+    try:
+        while True:
             try:
-                bot_state.update_status(str(uid), "CONNECTING")
-            except Exception:
-                pass
-            account_data = await process_account_uid_pass(uid, password)
-            if not account_data:
-                print_error(f"Login failed for UID: {uid}. Retrying in 15 seconds...")
+                print_info(f"[LOGIN] Starting login for Guest UID: {uid}...")
                 try:
-                    bot_state.update_status(str(uid), "ERROR")
+                    bot_state.update_status(str(uid), "CONNECTING")
                 except Exception:
                     pass
-                await asyncio.sleep(15)
-                continue
+                account_data = await process_account_uid_pass(uid, password)
+                if not account_data:
+                    print_error(f"Login failed for UID: {uid}. Retrying in 15 seconds...")
+                    try:
+                        bot_state.update_status(str(uid), "ERROR")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(15)
+                    continue
 
-            await run_account_worker(account_data, uid)
-            print_warning(f"Session finished for {uid}. Reconnecting in 3s...")
-            await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            print_warning(f"Worker for {uid} stopped.")
-            try:
-                bot_state.update_status(str(uid), "OFFLINE")
-            except Exception:
-                pass
-            break
-        except Exception as e:
-            print_error(f"Error for UID {uid}: {e}. Retrying in 10s...")
-            await asyncio.sleep(10)
+                acc_id = str(account_data.get('account_id', uid))
+                if acc_id != str(uid):
+                    bot_state.remove_account_state(str(uid))
+                _track_worker_aliases(current_task, uid, acc_id, account_data.get('auth_uid'))
+                await run_account_worker(account_data, uid)
+                print_warning(f"Session finished for {uid}. Reconnecting in 3s...")
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                print_warning(f"Worker for {uid} stopped.")
+                try:
+                    bot_state.update_status(str(uid), "OFFLINE")
+                    if uid in bot_state.account_credentials:
+                        acc_id = str(bot_state.account_credentials[uid].get('account_id', ''))
+                        if acc_id:
+                            bot_state.update_status(acc_id, "OFFLINE")
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                print_error(f"Error for UID {uid}: {e}. Retrying in 10s...")
+                await asyncio.sleep(10)
+    finally:
+        _forget_worker_aliases(current_task)
 
 
 async def account_loop_token(token: str):
     token_label = token[:10]
-    while True:
-        try:
-            print_info("[LOGIN] Starting login with Access Token...")
-            account_data = await process_account_token(token)
-            if not account_data:
-                print_error("Login failed for Token. Retrying in 15 seconds...")
-                await asyncio.sleep(15)
-                continue
+    cache_key = f"tok_{token[:20]}"
+    current_task = asyncio.current_task()
+    _track_worker_aliases(current_task, token_label, cache_key)
+    try:
+        while True:
+            try:
+                print_info("[LOGIN] Starting login with Access Token...")
+                account_data = await process_account_token(token)
+                if not account_data:
+                    print_error("Login failed for Token. Retrying in 15 seconds...")
+                    await asyncio.sleep(15)
+                    continue
 
-            acc_id = str(account_data['account_id'])
-            await run_account_worker(account_data, acc_id)
-            print_warning("Token session finished. Reconnecting in 3s...")
-            await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            print_warning(f"Worker for token {token_label} stopped.")
-            break
-        except Exception as e:
-            print_error(f"Token error: {e}. Retrying in 10s...")
-            await asyncio.sleep(10)
+                acc_id = str(account_data['account_id'])
+                _track_worker_aliases(current_task, token_label, cache_key, acc_id)
+                await run_account_worker(account_data, acc_id)
+                print_warning("Token session finished. Reconnecting in 3s...")
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                print_warning(f"Worker for token {token_label} stopped.")
+                try:
+                    account_data = bot_state.account_credentials.get(cache_key) or bot_state.account_credentials.get(token_label)
+                    if account_data and account_data.get('account_id'):
+                        bot_state.update_status(str(account_data['account_id']), "OFFLINE")
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                print_error(f"Token error: {e}. Retrying in 10s...")
+                await asyncio.sleep(10)
+    finally:
+        _forget_worker_aliases(current_task)
 
 
 # ==================== ACCOUNTS LOADER ====================
@@ -2109,8 +2179,9 @@ async def main():
     print_info("Device System: 1 ID = 1 Persistent Device ID (devices.json)")
     print_colored("=" * 60, Colors.CYAN)
 
+    dashboard_runner = None
     try:
-        await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
+        dashboard_runner = await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
         print_success(f"Web Dashboard live at http://localhost:{WEB_PORT}")
     except Exception as e:
         print_error(f"Could not start web dashboard: {e}")
@@ -2118,13 +2189,22 @@ async def main():
     async def on_account_added_handler(data):
         if "token" in data and data["token"]:
             t = str(data["token"]).strip()
+            token_key = f"tok_{t[:20]}"
+            existing = bot_state.account_workers.get(token_key) or bot_state.account_workers.get(t[:10])
+            if existing and not existing.done():
+                print_warning(f"Worker already running for token {t[:10]}...")
+                return
             task = asyncio.create_task(account_loop_token(t))
-            bot_state.account_workers[t[:10]] = task
+            _track_worker_aliases(task, token_key, t[:10])
         elif "uid" in data and "password" in data:
             u = str(data["uid"]).strip()
             p = str(data["password"]).strip()
+            existing = bot_state.account_workers.get(u)
+            if existing and not existing.done():
+                print_warning(f"Worker already running for UID {u}")
+                return
             task = asyncio.create_task(account_loop_guest(u, p))
-            bot_state.account_workers[u] = task
+            _track_worker_aliases(task, u)
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
@@ -2140,21 +2220,26 @@ async def main():
 
     for acc in accounts:
         if "token" in acc and acc["token"]:
-            t = asyncio.create_task(account_loop_token(acc["token"]))
-            bot_state.account_workers[acc["token"][:10]] = t
+            token = str(acc["token"])
+            task = asyncio.create_task(account_loop_token(token))
+            _track_worker_aliases(task, f"tok_{token[:20]}", token[:10])
         elif "uid" in acc and "password" in acc and acc["uid"]:
             u = str(acc["uid"])
-            t = asyncio.create_task(account_loop_guest(u, acc["password"]))
-            bot_state.account_workers[u] = t
+            task = asyncio.create_task(account_loop_guest(u, acc["password"]))
+            _track_worker_aliases(task, u)
 
     try:
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, asyncio.CancelledError):
         print_warning("\n[STOP] Shutting down all accounts...")
-        for t in list(bot_state.account_workers.values()):
-            t.cancel()
-        await asyncio.gather(*bot_state.account_workers.values(), return_exceptions=True)
+        tasks = list({task for task in bot_state.account_workers.values()})
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if dashboard_runner is not None:
+            await dashboard_runner.cleanup()
+        await client.aclose()
         print_success("All sessions cleanly closed.")
 
 
