@@ -3,915 +3,1386 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TEAM 84FF | FreeFire Level Up Bot Dashboard</title>
+    <title>TEAM 84FF | Level Up Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --bg-base: #060913;
-            --bg-card: rgba(13, 19, 36, 0.75);
-            --bg-card-hover: rgba(19, 27, 50, 0.9);
-            --border-card: rgba(0, 242, 254, 0.12);
-            --border-hover: rgba(0, 242, 254, 0.4);
-            --accent-cyan: #00f2fe;
-            --accent-blue: #4facfe;
-            --accent-purple: #7f00ff;
-            --accent-green: #00ff88;
-            --accent-red: #ff3366;
-            --accent-amber: #ffaa00;
-            --text-main: #f0f4fc;
-            --text-muted: #8e9bb5;
-            --glass-glow: 0 8px 32px 0 rgba(0, 242, 254, 0.08);
+            --bg: #050712;
+            --bg-2: #0b1020;
+            --surface: rgba(13, 20, 38, 0.78);
+            --surface-2: rgba(17, 26, 48, 0.92);
+            --surface-3: rgba(255, 255, 255, 0.055);
+            --border: rgba(148, 163, 184, 0.16);
+            --border-strong: rgba(0, 242, 254, 0.38);
+            --text: #eef6ff;
+            --muted: #94a3b8;
+            --muted-2: #64748b;
+            --cyan: #00f2fe;
+            --blue: #4facfe;
+            --violet: #8b5cf6;
+            --green: #22c55e;
+            --amber: #f59e0b;
+            --red: #ef4444;
+            --pink: #fb7185;
+            --shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+            --glow: 0 0 34px rgba(0, 242, 254, 0.16);
+            --radius-xl: 28px;
+            --radius-lg: 22px;
+            --radius-md: 16px;
+            --radius-sm: 12px;
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: 'Outfit', sans-serif;
+        }
+
+        html {
+            scroll-behavior: smooth;
         }
 
         body {
-            background-color: var(--bg-base);
-            background-image: 
-                radial-gradient(circle at 15% 15%, rgba(127, 0, 255, 0.14) 0%, transparent 45%),
-                radial-gradient(circle at 85% 85%, rgba(0, 242, 254, 0.12) 0%, transparent 45%),
-                linear-gradient(180deg, #060913 0%, #0a0e1c 100%);
-            color: var(--text-main);
             min-height: 100vh;
-            padding: 24px;
+            color: var(--text);
+            font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(79, 172, 254, 0.24), transparent 32rem),
+                radial-gradient(circle at 80% 10%, rgba(139, 92, 246, 0.20), transparent 30rem),
+                radial-gradient(circle at 50% 100%, rgba(34, 197, 94, 0.12), transparent 34rem),
+                linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
             overflow-x: hidden;
         }
 
-        .container {
-            max-width: 1440px;
-            margin: 0 auto;
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+            background-size: 44px 44px;
+            mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 78%);
         }
 
-        /* Header */
-        header {
+        button,
+        input,
+        textarea,
+        select {
+            font: inherit;
+        }
+
+        button {
+            border: 0;
+        }
+
+        .app {
+            width: min(1480px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 24px 0 36px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .topbar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 20px 28px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            border-radius: 20px;
-            backdrop-filter: blur(16px);
-            box-shadow: var(--glass-glow);
-            margin-bottom: 24px;
+            gap: 18px;
+            margin-bottom: 20px;
         }
 
         .brand {
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 14px;
+            min-width: 0;
         }
 
-        .logo-box {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 22px;
-            color: #fff;
-            box-shadow: 0 0 20px rgba(0, 242, 254, 0.4);
-            animation: pulse-glow 3s infinite alternate;
+        .brand-icon {
+            width: 54px;
+            height: 54px;
+            display: grid;
+            place-items: center;
+            border-radius: 18px;
+            color: #05101b;
+            font-size: 24px;
+            background: linear-gradient(135deg, var(--cyan), var(--blue) 48%, var(--violet));
+            box-shadow: 0 18px 50px rgba(0, 242, 254, 0.24);
         }
 
-        @keyframes pulse-glow {
-            0% { box-shadow: 0 0 15px rgba(0, 242, 254, 0.3); }
-            100% { box-shadow: 0 0 25px rgba(127, 0, 255, 0.5); }
+        .brand h1 {
+            font-size: clamp(22px, 3vw, 34px);
+            line-height: 1;
+            letter-spacing: -0.06em;
+            font-weight: 900;
         }
 
-        .brand-text h1 {
-            font-size: 22px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            background: linear-gradient(90deg, #ffffff, var(--accent-cyan));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .brand-text p {
+        .brand p {
+            margin-top: 6px;
+            color: var(--muted);
             font-size: 13px;
-            color: var(--text-muted);
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-top: 2px;
+            flex-wrap: wrap;
         }
 
-        .live-tag {
+        .connection-pill {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            background: rgba(0, 255, 136, 0.12);
-            border: 1px solid rgba(0, 255, 136, 0.3);
-            color: var(--accent-green);
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
+            gap: 8px;
+            padding: 9px 13px;
+            border: 1px solid rgba(34, 197, 94, 0.28);
+            color: #86efac;
+            background: rgba(34, 197, 94, 0.10);
+            border-radius: 999px;
+            font-weight: 800;
+            font-size: 12px;
             text-transform: uppercase;
+            letter-spacing: 0.06em;
+            white-space: nowrap;
         }
 
-        .pulse-dot {
-            width: 7px;
-            height: 7px;
-            background: var(--accent-green);
-            border-radius: 50%;
-            animation: blink 1.2s infinite;
+        .connection-pill.offline {
+            border-color: rgba(239, 68, 68, 0.32);
+            color: #fecaca;
+            background: rgba(239, 68, 68, 0.10);
         }
 
-        @keyframes blink {
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 999px;
+            background: currentColor;
+            box-shadow: 0 0 16px currentColor;
+            animation: pulse 1.35s infinite ease-in-out;
+        }
+
+        @keyframes pulse {
             0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.4; transform: scale(0.8); }
+            50% { opacity: .45; transform: scale(.72); }
         }
 
-        .header-actions {
+        .hero {
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(135deg, rgba(0, 242, 254, 0.12), rgba(139, 92, 246, 0.10)),
+                var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow), var(--glow);
+            border-radius: var(--radius-xl);
+            padding: 26px;
+            backdrop-filter: blur(22px);
+            margin-bottom: 20px;
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            width: 320px;
+            height: 320px;
+            right: -130px;
+            top: -130px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 242, 254, 0.28), transparent 68%);
+            filter: blur(3px);
+        }
+
+        .hero-content {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 22px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero h2 {
+            max-width: 760px;
+            font-size: clamp(26px, 4vw, 48px);
+            line-height: 0.98;
+            letter-spacing: -0.07em;
+            font-weight: 900;
+        }
+
+        .gradient-text {
+            background: linear-gradient(90deg, #fff, var(--cyan), #b4a7ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .hero p {
+            margin-top: 14px;
+            color: var(--muted);
+            max-width: 720px;
+            line-height: 1.65;
+        }
+
+        .hero-actions {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 12px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
         }
 
         .btn {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 10px 18px;
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 600;
+            justify-content: center;
+            gap: 9px;
+            min-height: 44px;
+            padding: 0 17px;
+            border-radius: 14px;
             cursor: pointer;
-            transition: all 0.25s ease;
-            border: none;
-            outline: none;
+            font-weight: 800;
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+            color: var(--text);
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        .btn:disabled {
+            opacity: .6;
+            cursor: not-allowed;
+            transform: none !important;
         }
 
         .btn-primary {
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
-            color: #040914;
-            box-shadow: 0 4px 16px rgba(0, 242, 254, 0.25);
+            color: #04111f;
+            background: linear-gradient(135deg, var(--cyan), var(--blue));
+            box-shadow: 0 16px 36px rgba(0, 242, 254, 0.22);
         }
 
-        .btn-primary:hover {
+        .btn-secondary,
+        .btn-ghost {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+        }
+
+        .btn-ghost {
+            min-height: 38px;
+            padding: 0 13px;
+            font-size: 13px;
+        }
+
+        .btn:hover:not(:disabled) {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 242, 254, 0.4);
+            border-color: var(--border-strong);
         }
 
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border-card);
-            color: var(--text-main);
+        .btn-primary:hover:not(:disabled) {
+            box-shadow: 0 18px 42px rgba(0, 242, 254, 0.34);
         }
 
-        .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: var(--border-hover);
-        }
-
-        /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 18px;
-            margin-bottom: 24px;
-        }
-
-        .stat-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            border-radius: 18px;
-            padding: 20px;
-            backdrop-filter: blur(14px);
-            display: flex;
-            align-items: center;
-            gap: 18px;
-            transition: all 0.3s ease;
-        }
-
-        .stat-card:hover {
-            border-color: var(--border-hover);
-            transform: translateY(-3px);
-            box-shadow: var(--glass-glow);
-        }
-
-        .stat-icon {
-            width: 52px;
-            height: 52px;
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 22px;
-        }
-
-        .stat-icon.cyan { background: rgba(0, 242, 254, 0.15); color: var(--accent-cyan); }
-        .stat-icon.green { background: rgba(0, 255, 136, 0.15); color: var(--accent-green); }
-        .stat-icon.purple { background: rgba(127, 0, 255, 0.15); color: #c084fc; }
-        .stat-icon.amber { background: rgba(255, 170, 0, 0.15); color: var(--accent-amber); }
-
-        .stat-content h3 {
-            font-size: 26px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            color: #fff;
-        }
-
-        .stat-content p {
-            font-size: 13px;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-
-        /* Main Section Layout */
-        .dashboard-main {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 24px;
-        }
-
-        @media (max-width: 1024px) {
-            .dashboard-main { grid-template-columns: 1fr; }
-        }
-
-        /* Card Box */
-        .card-box {
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            border-radius: 20px;
-            padding: 24px;
-            backdrop-filter: blur(16px);
-        }
-
-        .box-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            grid-template-columns: repeat(5, minmax(150px, 1fr));
+            gap: 14px;
             margin-bottom: 20px;
         }
 
-        .box-title {
-            font-size: 18px;
-            font-weight: 700;
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 18px;
+            min-height: 126px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            backdrop-filter: blur(18px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+        }
+
+        .stat-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            color: var(--muted);
+            font-weight: 800;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .stat-icon {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 13px;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .stat-card h3 {
+            margin-top: 16px;
+            font-size: clamp(24px, 3vw, 34px);
+            letter-spacing: -0.05em;
+            font-weight: 900;
+            white-space: nowrap;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.75fr) minmax(360px, .92fr);
+            gap: 20px;
+            align-items: start;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(20px);
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 20px 20px 16px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.10);
+        }
+
+        .panel-title {
             display: flex;
             align-items: center;
             gap: 10px;
+            min-width: 0;
+        }
+
+        .panel-title h3 {
+            font-size: 18px;
+            letter-spacing: -0.03em;
+        }
+
+        .panel-title span {
+            display: block;
+            margin-top: 3px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .search-wrap {
+            position: relative;
+            width: min(280px, 100%);
+        }
+
+        .search-wrap i {
+            position: absolute;
+            left: 13px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--muted-2);
+        }
+
+        .input,
+        .select,
+        .textarea {
+            width: 100%;
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.065);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            outline: none;
+            transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+        }
+
+        .input,
+        .select {
+            height: 44px;
+            padding: 0 14px;
+        }
+
+        .search-wrap .input {
+            padding-left: 39px;
+        }
+
+        .textarea {
+            min-height: 106px;
+            resize: vertical;
+            padding: 12px 14px;
+        }
+
+        .input:focus,
+        .select:focus,
+        .textarea:focus {
+            border-color: rgba(0, 242, 254, 0.58);
+            box-shadow: 0 0 0 4px rgba(0, 242, 254, 0.10);
+            background: rgba(255, 255, 255, 0.085);
         }
 
         .accounts-list {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .account-card {
-            background: rgba(10, 15, 30, 0.65);
-            border: 1px solid rgba(255, 255, 255, 0.07);
-            border-radius: 16px;
-            padding: 20px;
-            transition: all 0.25s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .account-card:hover {
-            background: var(--bg-card-hover);
-            border-color: var(--border-hover);
-        }
-
-        .acc-top {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 14px;
-        }
-
-        .acc-profile {
-            display: flex;
-            align-items: center;
+            padding: 18px;
+            display: grid;
             gap: 14px;
         }
 
-        .acc-avatar {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, #1e293b, #334155);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 16px;
-            color: var(--accent-cyan);
-            border: 1px solid rgba(0, 242, 254, 0.2);
+        .account-card {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.064), rgba(255, 255, 255, 0.032));
+            border-radius: var(--radius-lg);
+            padding: 18px;
+            transition: transform .18s ease, border-color .18s ease, background .18s ease;
         }
 
-        .acc-info h4 {
-            font-size: 16px;
-            font-weight: 700;
-            color: #fff;
+        .account-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto;
+            height: 2px;
+            background: linear-gradient(90deg, var(--cyan), var(--violet), transparent);
+            opacity: .76;
+        }
+
+        .account-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(0, 242, 254, 0.32);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.088), rgba(255, 255, 255, 0.04));
+        }
+
+        .account-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 16px;
+        }
+
+        .profile {
             display: flex;
             align-items: center;
+            gap: 13px;
+            min-width: 0;
+        }
+
+        .avatar {
+            width: 48px;
+            height: 48px;
+            display: grid;
+            place-items: center;
+            flex: 0 0 auto;
+            border-radius: 16px;
+            color: var(--cyan);
+            background: rgba(0, 242, 254, 0.10);
+            border: 1px solid rgba(0, 242, 254, 0.20);
+            font-weight: 900;
+        }
+
+        .profile h4 {
+            max-width: 440px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 17px;
+            font-weight: 900;
+            letter-spacing: -0.03em;
+        }
+
+        .subline {
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
             gap: 8px;
-        }
-
-        .region-badge {
-            background: rgba(255, 255, 255, 0.08);
-            color: #a5b4fc;
-            padding: 2px 7px;
-            border-radius: 6px;
-            font-size: 10px;
-            font-weight: 700;
-        }
-
-        .acc-info span {
+            color: var(--muted);
             font-size: 12px;
-            color: var(--text-muted);
-            font-family: 'JetBrains Mono', monospace;
         }
 
-        .acc-status {
-            display: flex;
+        .mono {
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        .badge {
+            display: inline-flex;
             align-items: center;
             gap: 6px;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 4px 12px;
-            border-radius: 20px;
-        }
-
-        .status-online {
-            background: rgba(0, 255, 136, 0.12);
-            color: var(--accent-green);
-            border: 1px solid rgba(0, 255, 136, 0.25);
-        }
-
-        .status-match {
-            background: rgba(0, 242, 254, 0.15);
-            color: var(--accent-cyan);
-            border: 1px solid rgba(0, 242, 254, 0.4);
-            animation: pulse-border 1.5s infinite alternate;
-        }
-
-        @keyframes pulse-border {
-            0% { border-color: rgba(0, 242, 254, 0.3); }
-            100% { border-color: rgba(0, 242, 254, 0.8); }
-        }
-
-        /* EXP Box */
-        .exp-box {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 12px;
-            background: rgba(0, 0, 0, 0.28);
-            padding: 12px 16px;
-            border-radius: 12px;
-            margin-bottom: 14px;
-        }
-
-        .exp-item {
-            display: flex;
-            flex-direction: column;
-            gap: 3px;
-        }
-
-        .exp-label {
+            min-height: 24px;
+            padding: 0 9px;
+            border-radius: 999px;
+            color: #dbeafe;
+            background: rgba(59, 130, 246, 0.14);
+            border: 1px solid rgba(59, 130, 246, 0.20);
             font-size: 11px;
-            color: var(--text-muted);
+            font-weight: 900;
             text-transform: uppercase;
-            font-weight: 600;
+            letter-spacing: .05em;
         }
 
-        .exp-val {
-            font-size: 15px;
-            font-weight: 700;
-            font-family: 'JetBrains Mono', monospace;
-            color: #fff;
-        }
-
-        .exp-gained {
-            color: var(--accent-green) !important;
-            display: flex;
+        .status {
+            flex: 0 0 auto;
+            display: inline-flex;
             align-items: center;
-            gap: 4px;
-        }
-
-        .gained-badge {
-            background: rgba(0, 255, 136, 0.16);
-            padding: 2px 7px;
-            border-radius: 6px;
+            gap: 7px;
+            min-height: 30px;
+            padding: 0 11px;
+            border-radius: 999px;
+            border: 1px solid currentColor;
+            background: rgba(255, 255, 255, 0.06);
             font-size: 12px;
-            font-weight: 700;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: .04em;
         }
 
-        /* Level Progress Bar */
-        .level-progress {
-            margin-bottom: 14px;
+        .status.online { color: #86efac; background: rgba(34, 197, 94, 0.10); }
+        .status.match { color: #67e8f9; background: rgba(6, 182, 212, 0.12); }
+        .status.searching { color: #fde68a; background: rgba(245, 158, 11, 0.12); }
+        .status.connecting { color: #bfdbfe; background: rgba(59, 130, 246, 0.12); }
+        .status.error { color: #fecaca; background: rgba(239, 68, 68, 0.12); }
+        .status.offline { color: #cbd5e1; background: rgba(148, 163, 184, 0.10); }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
         }
 
-        .level-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
+        .metric {
+            min-width: 0;
+            border-radius: 15px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.18);
+            border: 1px solid rgba(148, 163, 184, 0.10);
+        }
+
+        .metric span {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: .07em;
             margin-bottom: 6px;
-            font-weight: 600;
         }
 
-        .progress-bar-bg {
-            height: 6px;
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 10px;
+        .metric strong {
+            display: block;
             overflow: hidden;
-            position: relative;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 15px;
+            font-weight: 900;
         }
 
-        .progress-bar-fill {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
-            border-radius: 10px;
-            transition: width 0.5s ease;
+        .metric .positive {
+            color: #86efac;
         }
 
-        .acc-actions {
+        .progress-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding-top: 10px;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--muted);
             font-size: 12px;
-            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-weight: 800;
         }
 
-        .action-btns {
+        .progress-track {
+            height: 9px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.075);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--cyan), var(--green));
+            box-shadow: 0 0 18px rgba(34, 197, 94, 0.28);
+            transition: width .45s ease;
+        }
+
+        .account-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(148, 163, 184, 0.10);
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .icon-actions {
             display: flex;
             gap: 8px;
         }
 
         .icon-btn {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border-card);
-            color: var(--text-muted);
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
             cursor: pointer;
-            transition: all 0.2s ease;
+            color: var(--muted);
+            background: rgba(255, 255, 255, 0.065);
+            border: 1px solid var(--border);
+            transition: color .18s ease, border-color .18s ease, background .18s ease, transform .18s ease;
         }
 
         .icon-btn:hover {
-            background: rgba(0, 242, 254, 0.15);
-            color: var(--accent-cyan);
-            border-color: var(--accent-cyan);
+            color: var(--cyan);
+            border-color: rgba(0, 242, 254, 0.38);
+            background: rgba(0, 242, 254, 0.10);
+            transform: translateY(-1px);
         }
 
         .icon-btn.danger:hover {
-            background: rgba(255, 51, 102, 0.15);
-            color: var(--accent-red);
-            border-color: var(--accent-red);
+            color: #fecaca;
+            border-color: rgba(239, 68, 68, 0.38);
+            background: rgba(239, 68, 68, 0.12);
         }
 
-        /* Live Logs Stream */
-        .logs-box {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
+        .log-panel {
+            position: sticky;
+            top: 18px;
         }
 
-        .log-stream {
-            flex: 1;
-            min-height: 480px;
-            max-height: 600px;
-            background: #03060f;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 14px;
-            padding: 14px;
-            font-family: 'JetBrains Mono', monospace;
+        .logs {
+            height: min(660px, calc(100vh - 260px));
+            min-height: 430px;
+            overflow: auto;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.18);
+        }
+
+        .logs::-webkit-scrollbar,
+        .modal-body::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .logs::-webkit-scrollbar-thumb,
+        .modal-body::-webkit-scrollbar-thumb {
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.22);
+        }
+
+        .log-line {
+            display: grid;
+            grid-template-columns: 72px 1fr;
+            gap: 10px;
+            padding: 10px 11px;
+            border-radius: 13px;
+            color: #cbd5e1;
+            background: rgba(255, 255, 255, 0.035);
+            border: 1px solid rgba(255, 255, 255, 0.045);
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
             font-size: 12px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
+            line-height: 1.45;
+            word-break: break-word;
         }
 
-        .log-stream::-webkit-scrollbar {
-            width: 6px;
+        .log-line + .log-line {
+            margin-top: 8px;
         }
 
-        .log-stream::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 3px;
+        .log-time {
+            color: var(--muted-2);
         }
 
-        .log-item {
-            line-height: 1.4;
-            word-break: break-all;
+        .log-message.info { color: #7dd3fc; }
+        .log-message.success { color: #86efac; }
+        .log-message.warning { color: #fcd34d; }
+        .log-message.error { color: #fca5a5; }
+
+        .empty-state,
+        .error-state {
+            display: grid;
+            place-items: center;
+            text-align: center;
+            gap: 10px;
+            padding: 44px 18px;
+            color: var(--muted);
+            border: 1px dashed rgba(148, 163, 184, 0.18);
+            border-radius: var(--radius-lg);
+            background: rgba(255, 255, 255, 0.035);
         }
 
-        .log-time { color: #64748b; margin-right: 6px; }
-        .log-info { color: #38bdf8; }
-        .log-success { color: #4ade80; }
-        .log-warning { color: #fbbf24; }
-        .log-error { color: #f87171; }
+        .empty-state i,
+        .error-state i {
+            font-size: 34px;
+            color: rgba(255, 255, 255, 0.24);
+        }
 
-        /* Modal */
         .modal-overlay {
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(3, 6, 15, 0.82);
-            backdrop-filter: blur(8px);
+            inset: 0;
             display: none;
             align-items: center;
             justify-content: center;
-            z-index: 100;
+            padding: 18px;
+            background: rgba(2, 6, 23, 0.78);
+            backdrop-filter: blur(14px);
+            z-index: 50;
         }
 
-        .modal-overlay.active { display: flex; }
-
-        .modal-card {
-            background: #0c1224;
-            border: 1px solid var(--border-card);
-            border-radius: 20px;
-            width: 100%;
-            max-width: 480px;
-            padding: 28px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        .modal-overlay.active {
+            display: flex;
         }
 
-        .modal-header {
+        .modal {
+            width: min(540px, 100%);
+            max-height: min(720px, 94vh);
+            overflow: hidden;
+            background: #0b1224;
+            border: 1px solid rgba(148, 163, 184, 0.20);
+            border-radius: 26px;
+            box-shadow: 0 30px 90px rgba(0, 0, 0, 0.58);
+            animation: modalIn .18s ease-out;
+        }
+
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(10px) scale(.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .modal-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 20px;
+            gap: 12px;
+            padding: 20px 22px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
         }
 
-        .modal-header h3 {
-            font-size: 18px;
-            font-weight: 700;
+        .modal-head h3 {
+            font-size: 20px;
+            letter-spacing: -0.04em;
         }
 
-        .form-group {
-            margin-bottom: 16px;
+        .modal-body {
+            max-height: calc(94vh - 78px);
+            overflow: auto;
+            padding: 22px;
         }
 
-        .form-group label {
-            display: block;
+        .form-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .field label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            color: #cbd5e1;
             font-size: 13px;
-            font-weight: 600;
-            color: var(--text-muted);
-            margin-bottom: 6px;
+            font-weight: 800;
         }
 
-        .form-input {
-            width: 100%;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            padding: 10px 14px;
-            color: #fff;
-            font-size: 14px;
-            outline: none;
-            transition: border-color 0.2s;
+        .field-hint {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 7px;
+            line-height: 1.5;
         }
 
-        .form-input:focus {
-            border-color: var(--accent-cyan);
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 22px;
+            flex-wrap: wrap;
         }
 
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: var(--text-muted);
+        .toast-wrap {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 70;
+            display: grid;
+            gap: 10px;
+            width: min(360px, calc(100% - 36px));
         }
 
-        .empty-state i {
-            font-size: 42px;
-            margin-bottom: 12px;
-            color: rgba(255, 255, 255, 0.1);
+        .toast {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px;
+            padding: 14px;
+            border-radius: 18px;
+            background: rgba(15, 23, 42, 0.94);
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            box-shadow: 0 20px 60px rgba(0,0,0,.35);
+            color: var(--text);
+            animation: toastIn .22s ease-out;
+        }
+
+        .toast.success i { color: #86efac; }
+        .toast.error i { color: #fca5a5; }
+        .toast.info i { color: #7dd3fc; }
+
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 1180px) {
+            .stats-grid { grid-template-columns: repeat(3, 1fr); }
+            .content-grid { grid-template-columns: 1fr; }
+            .log-panel { position: static; }
+            .logs { height: 430px; }
+        }
+
+        @media (max-width: 760px) {
+            .app { width: min(100% - 20px, 1480px); padding-top: 14px; }
+            .topbar,
+            .hero-content,
+            .panel-header,
+            .account-top,
+            .account-actions {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .hero-content { grid-template-columns: 1fr; }
+            .hero-actions { justify-content: flex-start; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .toolbar { width: 100%; }
+            .search-wrap { width: 100%; }
+            .metrics { grid-template-columns: repeat(2, 1fr); }
+            .profile h4 { max-width: 240px; }
+            .status { width: fit-content; }
+            .modal-actions .btn { flex: 1 1 160px; }
+        }
+
+        @media (max-width: 460px) {
+            .metrics { grid-template-columns: 1fr; }
+            .hero, .panel { border-radius: 20px; }
+            .hero { padding: 20px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header>
+    <main class="app">
+        <section class="topbar" aria-label="Dashboard topbar">
             <div class="brand">
-                <div class="logo-box">
-                    <i class="fa-solid fa-bolt"></i>
-                </div>
-                <div class="brand-text">
-                    <h1>TEAM 84FF <span style="font-weight:400; color:var(--text-muted); font-size:16px;">| LEVEL UP BOT</span></h1>
-                    <p>
-                        <span class="live-tag"><span class="pulse-dot"></span> System Live</span>
-                        <span>• Safe Multi-Match Engine</span>
-                    </p>
+                <div class="brand-icon"><i class="fa-solid fa-bolt"></i></div>
+                <div>
+                    <h1>TEAM 84FF</h1>
+                    <p><span>Level Up Bot Dashboard</span><span class="mono" id="server-clock">--:--:--</span></p>
                 </div>
             </div>
-            <div class="header-actions">
-                <button class="btn btn-secondary" onclick="fetchStats()"><i class="fa-solid fa-rotate"></i> Refresh</button>
-                <button class="btn btn-primary" onclick="openAddModal()"><i class="fa-solid fa-plus"></i> Add Account</button>
-            </div>
-        </header>
+            <div class="connection-pill" id="connection-pill"><span class="dot"></span><span id="connection-text">Connecting</span></div>
+        </section>
 
-        <!-- Stats Bar -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-icon cyan"><i class="fa-solid fa-users"></i></div>
-                <div class="stat-content">
-                    <h3 id="stat-total-accounts">0</h3>
-                    <p>Active Accounts</p>
+        <section class="hero">
+            <div class="hero-content">
+                <div>
+                    <h2><span class="gradient-text">Real-time EXP monitor</span> with stable controls.</h2>
+                    <p>Clean UI, safer account actions, live worker status, and fixed dashboard bugs. Use the controls below to add, refresh, or remove accounts without editing files manually.</p>
+                </div>
+                <div class="hero-actions">
+                    <button class="btn btn-secondary" type="button" id="manual-refresh"><i class="fa-solid fa-rotate"></i> Refresh Now</button>
+                    <button class="btn btn-primary" type="button" id="open-add"><i class="fa-solid fa-plus"></i> Add Account</button>
                 </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-icon green"><i class="fa-solid fa-angles-up"></i></div>
-                <div class="stat-content">
-                    <h3 id="stat-total-exp" style="color:var(--accent-green)">+0 EXP</h3>
-                    <p>Total EXP Gained</p>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon purple"><i class="fa-solid fa-gamepad"></i></div>
-                <div class="stat-content">
-                    <h3 id="stat-total-matches">0</h3>
-                    <p>Matches Completed</p>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon amber"><i class="fa-solid fa-shield-halved"></i></div>
-                <div class="stat-content">
-                    <h3 id="stat-uptime">00:00:00</h3>
-                    <p>Bot Uptime</p>
-                </div>
-            </div>
-        </div>
+        </section>
 
-        <!-- Main Dashboard -->
-        <div class="dashboard-main">
-            <!-- Accounts List -->
-            <div class="card-box">
-                <div class="box-header">
-                    <div class="box-title">
-                        <i class="fa-solid fa-user-astronaut" style="color:var(--accent-cyan)"></i>
-                        <span>Live Accounts & EXP Monitor</span>
+        <section class="stats-grid" aria-label="Live statistics">
+            <article class="stat-card">
+                <div class="stat-top"><span>Accounts</span><span class="stat-icon" style="color:var(--cyan)"><i class="fa-solid fa-users"></i></span></div>
+                <h3 id="stat-total-accounts">0</h3>
+            </article>
+            <article class="stat-card">
+                <div class="stat-top"><span>Workers</span><span class="stat-icon" style="color:var(--blue)"><i class="fa-solid fa-microchip"></i></span></div>
+                <h3 id="stat-active-workers">0</h3>
+            </article>
+            <article class="stat-card">
+                <div class="stat-top"><span>Total EXP</span><span class="stat-icon" style="color:var(--green)"><i class="fa-solid fa-angles-up"></i></span></div>
+                <h3 id="stat-total-exp" style="color:#86efac">+0</h3>
+            </article>
+            <article class="stat-card">
+                <div class="stat-top"><span>Matches</span><span class="stat-icon" style="color:var(--violet)"><i class="fa-solid fa-gamepad"></i></span></div>
+                <h3 id="stat-total-matches">0</h3>
+            </article>
+            <article class="stat-card">
+                <div class="stat-top"><span>Uptime</span><span class="stat-icon" style="color:var(--amber)"><i class="fa-solid fa-clock"></i></span></div>
+                <h3 id="stat-uptime">00:00:00</h3>
+            </article>
+        </section>
+
+        <section class="content-grid">
+            <section class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="stat-icon" style="color:var(--cyan)"><i class="fa-solid fa-user-astronaut"></i></span>
+                        <div>
+                            <h3>Accounts & EXP</h3>
+                            <span id="account-summary">Waiting for data...</span>
+                        </div>
+                    </div>
+                    <div class="toolbar">
+                        <div class="search-wrap">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input class="input" type="search" id="account-search" placeholder="Search UID or name">
+                        </div>
                     </div>
                 </div>
                 <div class="accounts-list" id="accounts-container">
-                    <div class="empty-state">
-                        <i class="fa-solid fa-circle-notch fa-spin"></i>
-                        <p>Loading active accounts...</p>
-                    </div>
+                    <div class="empty-state"><i class="fa-solid fa-circle-notch fa-spin"></i><strong>Loading dashboard...</strong><span>Please wait a moment.</span></div>
                 </div>
-            </div>
+            </section>
 
-            <!-- Real-time Logs -->
-            <div class="card-box logs-box">
-                <div class="box-header">
-                    <div class="box-title">
-                        <i class="fa-solid fa-terminal" style="color:var(--accent-green)"></i>
-                        <span>Live Match & Bot Logs</span>
+            <aside class="panel log-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="stat-icon" style="color:var(--green)"><i class="fa-solid fa-terminal"></i></span>
+                        <div>
+                            <h3>Live Logs</h3>
+                            <span>Last 80 events</span>
+                        </div>
                     </div>
-                    <span style="font-size:12px; color:var(--text-muted);">Real-time</span>
+                    <button class="btn btn-ghost" type="button" id="clear-local-logs"><i class="fa-solid fa-eraser"></i> Clear View</button>
                 </div>
-                <div class="log-stream" id="log-stream">
-                    <!-- Logs inserted dynamically -->
+                <div class="logs" id="log-stream"></div>
+            </aside>
+        </section>
+    </main>
+
+    <div class="modal-overlay" id="add-modal" role="dialog" aria-modal="true" aria-labelledby="add-modal-title">
+        <div class="modal">
+            <div class="modal-head">
+                <div>
+                    <h3 id="add-modal-title"><i class="fa-solid fa-user-plus" style="color:var(--cyan)"></i> Add Account</h3>
+                    <p class="field-hint">Saved to accounts.json and started automatically.</p>
                 </div>
+                <button class="icon-btn" type="button" id="close-add" aria-label="Close modal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="add-acc-form" class="form-grid" autocomplete="off">
+                    <div class="field">
+                        <label for="acc-type"><i class="fa-solid fa-layer-group"></i> Account Type</label>
+                        <select class="select" id="acc-type">
+                            <option value="guest">Guest Account (UID + Password)</option>
+                            <option value="token">Access Token</option>
+                        </select>
+                    </div>
+
+                    <div id="guest-fields" class="form-grid">
+                        <div class="field">
+                            <label for="acc-uid"><i class="fa-solid fa-id-card"></i> Guest UID</label>
+                            <input class="input" type="text" id="acc-uid" inputmode="numeric" placeholder="e.g. 7644913583">
+                        </div>
+                        <div class="field">
+                            <label for="acc-password"><i class="fa-solid fa-key"></i> Guest Password / Secret</label>
+                            <input class="input" type="password" id="acc-password" placeholder="Enter guest secret">
+                            <p class="field-hint">Secrets are only sent to the local dashboard API and stored in your local accounts.json.</p>
+                        </div>
+                    </div>
+
+                    <div id="token-fields" class="form-grid" style="display:none;">
+                        <div class="field">
+                            <label for="acc-token"><i class="fa-solid fa-ticket"></i> Access Token</label>
+                            <textarea class="textarea" id="acc-token" placeholder="Paste access token here..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="modal-actions">
+                        <button class="btn btn-secondary" type="button" id="cancel-add">Cancel</button>
+                        <button class="btn btn-primary" type="submit" id="save-account"><i class="fa-solid fa-floppy-disk"></i> Save & Start</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
-    <!-- Add Account Modal -->
-    <div class="modal-overlay" id="add-modal">
-        <div class="modal-card">
-            <div class="modal-header">
-                <h3><i class="fa-solid fa-user-plus" style="color:var(--accent-cyan); margin-right:8px;"></i> Add New Account</h3>
-                <button class="icon-btn" onclick="closeAddModal()"><i class="fa-solid fa-xmark"></i></button>
-            </div>
-            <form id="add-acc-form" onsubmit="submitAddAccount(event)">
-                <div class="form-group">
-                    <label>Account Type</label>
-                    <select class="form-input" id="acc-type" onchange="toggleFormType()">
-                        <option value="guest">Guest Account (UID + Password)</option>
-                        <option value="token">Access Token</option>
-                    </select>
-                </div>
-                <div id="guest-fields">
-                    <div class="form-group">
-                        <label>Guest UID</label>
-                        <input type="text" class="form-input" id="acc-uid" placeholder="e.g. 7644913583">
-                    </div>
-                    <div class="form-group">
-                        <label>Guest Password / Secret</label>
-                        <input type="text" class="form-input" id="acc-password" placeholder="e.g. ZERO_GRAVITY_4NM38">
-                    </div>
-                </div>
-                <div id="token-fields" style="display:none;">
-                    <div class="form-group">
-                        <label>Access Token</label>
-                        <textarea class="form-input" id="acc-token" rows="3" placeholder="Paste access token here..."></textarea>
-                    </div>
-                </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
-                    <button type="button" class="btn btn-secondary" onclick="closeAddModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Save & Start</button>
-                </div>
-            </form>
-        </div>
-    </div>
+    <div class="toast-wrap" id="toast-wrap" aria-live="polite" aria-atomic="true"></div>
 
     <script>
-        let startTime = Date.now();
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const accountsContainer = $('#accounts-container');
+        const logStream = $('#log-stream');
+        const searchInput = $('#account-search');
+        const addModal = $('#add-modal');
+        const addForm = $('#add-acc-form');
+        const saveButton = $('#save-account');
+        const connectionPill = $('#connection-pill');
+        const connectionText = $('#connection-text');
+
+        const state = {
+            accounts: [],
+            logs: [],
+            baseUptime: 0,
+            uptimeFetchedAt: Date.now(),
+            search: '',
+            clearedLogSignature: '',
+            fetching: false
+        };
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function escapeAttr(value) {
+            return escapeHtml(value).replace(/`/g, '&#096;');
+        }
+
+        function formatNumber(value) {
+            const number = Number(value || 0);
+            return Number.isFinite(number) ? number.toLocaleString() : '0';
+        }
+
+        function formatDuration(seconds) {
+            seconds = Math.max(0, Number(seconds || 0));
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return [h, m, s].map(v => String(v).padStart(2, '0')).join(':');
+        }
+
+        function setConnection(online, message) {
+            connectionPill.classList.toggle('offline', !online);
+            connectionText.textContent = message || (online ? 'Live' : 'Offline');
+        }
+
+        function statusMeta(status, activeMatches = 0) {
+            const normalized = String(status || 'UNKNOWN').toUpperCase();
+            const map = {
+                ONLINE: ['online', 'Online', 'fa-circle-check'],
+                IN_MATCH: ['match', activeMatches > 0 ? `In Match · ${activeMatches}` : 'In Match', 'fa-gamepad'],
+                SEARCHING: ['searching', 'Searching', 'fa-magnifying-glass'],
+                CONNECTING: ['connecting', 'Connecting', 'fa-plug-circle-bolt'],
+                ERROR: ['error', 'Error', 'fa-triangle-exclamation'],
+                OFFLINE: ['offline', 'Offline', 'fa-power-off']
+            };
+            return map[normalized] || ['offline', normalized.replaceAll('_', ' '), 'fa-circle-question'];
+        }
+
+        function progressFromExp(exp) {
+            const value = Number(exp || 0);
+            if (!Number.isFinite(value) || value <= 0) return 0;
+            return Math.max(3, Math.min(100, (value % 1000) / 10));
+        }
+
+        function initials(name, uid) {
+            const clean = String(name || '').trim();
+            if (clean) return clean.slice(0, 2).toUpperCase();
+            return String(uid || 'FF').slice(-2).toUpperCase();
+        }
+
+        function renderStats(data) {
+            $('#stat-total-accounts').textContent = formatNumber(data.total_accounts);
+            $('#stat-active-workers').textContent = formatNumber(data.active_workers);
+            $('#stat-total-exp').textContent = `+${formatNumber(data.total_gained_exp)}`;
+            $('#stat-total-matches').textContent = formatNumber(data.total_matches);
+            $('#server-clock').textContent = data.server_time || '--:--:--';
+            state.baseUptime = Number(data.uptime || 0);
+            state.uptimeFetchedAt = Date.now();
+            updateUptime();
+        }
+
+        function renderAccounts() {
+            const query = state.search.toLowerCase().trim();
+            const filtered = state.accounts.filter(acc => {
+                if (!query) return true;
+                return [acc.uid, acc.nickname, acc.region, acc.status].some(item => String(item || '').toLowerCase().includes(query));
+            });
+
+            $('#account-summary').textContent = `${filtered.length} shown · ${state.accounts.length} total`;
+
+            if (state.accounts.length === 0) {
+                accountsContainer.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fa-solid fa-ghost"></i>
+                        <strong>No active accounts yet</strong>
+                        <span>Click “Add Account” to save one and start the worker.</span>
+                    </div>`;
+                return;
+            }
+
+            if (filtered.length === 0) {
+                accountsContainer.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fa-solid fa-filter-circle-xmark"></i>
+                        <strong>No matching accounts</strong>
+                        <span>Try another UID, nickname, region, or status.</span>
+                    </div>`;
+                return;
+            }
+
+            accountsContainer.innerHTML = filtered.map(acc => {
+                const uid = String(acc.uid || '');
+                const nickname = acc.nickname || `Player ${uid.slice(-4)}`;
+                const [statusClass, statusText, statusIcon] = statusMeta(acc.status, acc.active_matches);
+                const gained = Number(acc.gained_exp || 0);
+                const progress = progressFromExp(acc.current_exp);
+                return `
+                    <article class="account-card">
+                        <div class="account-top">
+                            <div class="profile">
+                                <div class="avatar">${escapeHtml(initials(nickname, uid))}</div>
+                                <div style="min-width:0">
+                                    <h4 title="${escapeAttr(nickname)}">${escapeHtml(nickname)}</h4>
+                                    <div class="subline">
+                                        <span class="mono">UID: ${escapeHtml(uid)}</span>
+                                        <span class="badge"><i class="fa-solid fa-location-dot"></i>${escapeHtml(acc.region || 'BD')}</span>
+                                        <span class="badge"><i class="fa-solid fa-thumbs-up"></i>${formatNumber(acc.likes)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="status ${statusClass}"><span class="dot"></span><i class="fa-solid ${statusIcon}"></i><span>${escapeHtml(statusText)}</span></div>
+                        </div>
+
+                        <div class="metrics">
+                            <div class="metric"><span>Level</span><strong>${formatNumber(acc.level)}</strong></div>
+                            <div class="metric"><span>Initial EXP</span><strong>${formatNumber(acc.initial_exp)}</strong></div>
+                            <div class="metric"><span>Current EXP</span><strong>${formatNumber(acc.current_exp)}</strong></div>
+                            <div class="metric"><span>Gained</span><strong class="positive">+${formatNumber(gained)}</strong></div>
+                        </div>
+
+                        <div>
+                            <div class="progress-head"><span>Level progress estimate</span><span>${progress.toFixed(0)}%</span></div>
+                            <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
+                        </div>
+
+                        <div class="account-actions">
+                            <span>Matches: <strong>${formatNumber(acc.matches_played)}</strong> · Last: <strong>${escapeHtml(acc.last_match_time || acc.last_updated || 'Waiting')}</strong></span>
+                            <div class="icon-actions">
+                                <button class="icon-btn" type="button" data-action="refresh" data-uid="${escapeAttr(uid)}" title="Refresh Profile/EXP"><i class="fa-solid fa-rotate"></i></button>
+                                <button class="icon-btn danger" type="button" data-action="delete" data-uid="${escapeAttr(uid)}" title="Delete Account"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                        </div>
+                    </article>`;
+            }).join('');
+        }
+
+        function logSignature(logs) {
+            return logs.map(log => `${log.time || ''}|${log.level || ''}|${log.message || ''}`).join('\n');
+        }
+
+        function renderLogs(logs = state.logs) {
+            const signature = logSignature(logs);
+            let visible = logs;
+            if (state.clearedLogSignature && state.clearedLogSignature === signature) {
+                visible = [];
+            } else if (state.clearedLogSignature && state.clearedLogSignature !== signature) {
+                state.clearedLogSignature = '';
+            }
+            if (!visible.length) {
+                logStream.innerHTML = `<div class="empty-state"><i class="fa-solid fa-terminal"></i><strong>No logs in this view</strong><span>New bot events will appear here automatically.</span></div>`;
+                return;
+            }
+            const wasNearBottom = logStream.scrollHeight - logStream.scrollTop - logStream.clientHeight < 80;
+            logStream.innerHTML = visible.map(log => `
+                <div class="log-line">
+                    <span class="log-time">[${escapeHtml(log.time || '--:--:--')}]</span>
+                    <span class="log-message ${escapeAttr(log.level || 'info')}">${escapeHtml(log.message || '')}</span>
+                </div>`).join('');
+            if (wasNearBottom) logStream.scrollTop = logStream.scrollHeight;
+        }
+
+        function updateUptime() {
+            const liveSeconds = state.baseUptime + Math.floor((Date.now() - state.uptimeFetchedAt) / 1000);
+            $('#stat-uptime').textContent = formatDuration(liveSeconds);
+        }
+
+        async function requestJson(url, options = {}) {
+            const res = await fetch(url, {
+                cache: 'no-store',
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {})
+                }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.status === 'error') {
+                throw new Error(data.error || `Request failed (${res.status})`);
+            }
+            return data;
+        }
+
+        async function fetchStats(showToast = false) {
+            if (state.fetching) return;
+            state.fetching = true;
+            try {
+                const data = await requestJson('/api/stats', { headers: {} });
+                state.accounts = Array.isArray(data.accounts) ? data.accounts : [];
+                state.logs = Array.isArray(data.logs) ? data.logs : [];
+                renderStats(data);
+                renderAccounts();
+                renderLogs();
+                setConnection(true, 'Live');
+                if (showToast) toast('Dashboard refreshed', 'success');
+            } catch (err) {
+                setConnection(false, 'Disconnected');
+                accountsContainer.innerHTML = `
+                    <div class="error-state">
+                        <i class="fa-solid fa-wifi"></i>
+                        <strong>Could not reach dashboard API</strong>
+                        <span>${escapeHtml(err.message)}</span>
+                    </div>`;
+                if (showToast) toast(err.message, 'error');
+            } finally {
+                state.fetching = false;
+            }
+        }
 
         function openAddModal() {
-            document.getElementById('add-modal').classList.add('active');
+            addModal.classList.add('active');
+            setTimeout(() => $('#acc-type').focus(), 50);
         }
 
         function closeAddModal() {
-            document.getElementById('add-modal').classList.remove('active');
+            addModal.classList.remove('active');
         }
 
         function toggleFormType() {
-            const type = document.getElementById('acc-type').value;
-            document.getElementById('guest-fields').style.display = type === 'guest' ? 'block' : 'none';
-            document.getElementById('token-fields').style.display = type === 'token' ? 'block' : 'none';
+            const type = $('#acc-type').value;
+            $('#guest-fields').style.display = type === 'guest' ? 'grid' : 'none';
+            $('#token-fields').style.display = type === 'token' ? 'grid' : 'none';
         }
 
-        async function submitAddAccount(e) {
-            e.preventDefault();
-            const type = document.getElementById('acc-type').value;
-            let payload = {};
+        async function submitAddAccount(event) {
+            event.preventDefault();
+            const type = $('#acc-type').value;
+            let payload;
             if (type === 'guest') {
-                const uid = document.getElementById('acc-uid').value.trim();
-                const password = document.getElementById('acc-password').value.trim();
-                if (!uid || !password) return alert('Please enter both UID and Password');
+                const uid = $('#acc-uid').value.trim();
+                const password = $('#acc-password').value.trim();
+                if (!uid || !password) {
+                    toast('UID and password are required', 'error');
+                    return;
+                }
                 payload = { uid, password };
             } else {
-                const token = document.getElementById('acc-token').value.trim();
-                if (!token) return alert('Please enter token');
+                const token = $('#acc-token').value.trim();
+                if (!token) {
+                    toast('Token is required', 'error');
+                    return;
+                }
                 payload = { token };
             }
 
+            saveButton.disabled = true;
+            saveButton.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Saving...';
             try {
-                const res = await fetch('/api/account/add', {
+                await requestJson('/api/account/add', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                const data = await res.json();
-                if (data.status === 'ok') {
-                    closeAddModal();
-                    document.getElementById('add-acc-form').reset();
-                    fetchStats();
-                } else {
-                    alert('Error adding account: ' + (data.error || 'Unknown'));
-                }
+                toast('Account saved and worker started', 'success');
+                addForm.reset();
+                toggleFormType();
+                closeAddModal();
+                await fetchStats();
             } catch (err) {
-                alert('Request failed: ' + err);
+                toast(err.message, 'error');
+            } finally {
+                saveButton.disabled = false;
+                saveButton.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save & Start';
+            }
+        }
+
+        async function refreshAccount(uid) {
+            try {
+                await requestJson('/api/account/refresh', {
+                    method: 'POST',
+                    body: JSON.stringify({ uid })
+                });
+                toast(`Refresh requested for ${uid}`, 'info');
+                setTimeout(() => fetchStats(), 450);
+            } catch (err) {
+                toast(err.message, 'error');
             }
         }
 
         async function deleteAccount(uid) {
-            if (!confirm('Are you sure you want to remove account ' + uid + '?')) return;
+            if (!confirm(`Remove account ${uid}? This also stops its worker if it is running.`)) return;
             try {
-                const res = await fetch('/api/account/delete', {
+                await requestJson('/api/account/delete', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ uid })
                 });
-                fetchStats();
+                toast(`Account ${uid} removed`, 'success');
+                await fetchStats();
             } catch (err) {
-                console.error(err);
+                toast(err.message, 'error');
             }
         }
 
-        async function refreshAccountInfo(uid) {
-            try {
-                await fetch('/api/account/refresh', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uid })
-                });
-                fetchStats();
-            } catch (err) {
-                console.error(err);
-            }
+        function toast(message, type = 'info') {
+            const wrap = $('#toast-wrap');
+            const icon = type === 'success' ? 'fa-circle-check' : type === 'error' ? 'fa-triangle-exclamation' : 'fa-circle-info';
+            const node = document.createElement('div');
+            node.className = `toast ${type}`;
+            node.innerHTML = `<i class="fa-solid ${icon}"></i><span>${escapeHtml(message)}</span>`;
+            wrap.appendChild(node);
+            setTimeout(() => {
+                node.style.opacity = '0';
+                node.style.transform = 'translateY(6px)';
+                setTimeout(() => node.remove(), 220);
+            }, 3600);
         }
 
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const data = await res.json();
+        $('#open-add').addEventListener('click', openAddModal);
+        $('#close-add').addEventListener('click', closeAddModal);
+        $('#cancel-add').addEventListener('click', closeAddModal);
+        $('#manual-refresh').addEventListener('click', () => fetchStats(true));
+        $('#acc-type').addEventListener('change', toggleFormType);
+        addForm.addEventListener('submit', submitAddAccount);
 
-                document.getElementById('stat-total-accounts').innerText = data.total_accounts;
-                document.getElementById('stat-total-exp').innerText = '+' + data.total_gained_exp.toLocaleString() + ' EXP';
-                document.getElementById('stat-total-matches').innerText = data.total_matches;
+        addModal.addEventListener('click', (event) => {
+            if (event.target === addModal) closeAddModal();
+        });
 
-                // Render Accounts
-                const container = document.getElementById('accounts-container');
-                if (data.accounts.length === 0) {
-                    container.innerHTML = `
-                        <div class="empty-state">
-                            <i class="fa-solid fa-ghost"></i>
-                            <p>No active accounts running. Click "+ Add Account" to start!</p>
-                        </div>
-                    `;
-                } else {
-                    container.innerHTML = data.accounts.map(acc => {
-                        const gainedExp = acc.gained_exp || 0;
-                        const statusClass = acc.status === 'IN_MATCH' ? 'status-match' : 'status-online';
-                        const statusText = acc.status === 'IN_MATCH' ? `In Match (${acc.active_matches} active)` : acc.status;
-                        
-                        return `
-                            <div class="account-card">
-                                <div class="acc-top">
-                                    <div class="acc-profile">
-                                        <div class="acc-avatar"><i class="fa-solid fa-user"></i></div>
-                                        <div class="acc-info">
-                                            <h4>${escapeHtml(acc.nickname)} <span class="region-badge">${acc.region || 'BD'}</span></h4>
-                                            <span>UID: ${acc.uid}</span>
-                                        </div>
-                                    </div>
-                                    <div class="acc-status ${statusClass}">
-                                        <span class="pulse-dot"></span>
-                                        <span>${statusText}</span>
-                                    </div>
-                                </div>
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeAddModal();
+        });
 
-                                <div class="exp-box">
-                                    <div class="exp-item">
-                                        <span class="exp-label">Initial EXP</span>
-                                        <span class="exp-val">${acc.initial_exp.toLocaleString()}</span>
-                                    </div>
-                                    <div class="exp-item">
-                                        <span class="exp-label">Current EXP</span>
-                                        <span class="exp-val">${acc.current_exp.toLocaleString()}</span>
-                                    </div>
-                                    <div class="exp-item">
-                                        <span class="exp-label">EXP Gained</span>
-                                        <span class="exp-val exp-gained">
-                                            <span class="gained-badge">+${gainedExp.toLocaleString()} EXP</span>
-                                        </span>
-                                    </div>
-                                </div>
+        searchInput.addEventListener('input', (event) => {
+            state.search = event.target.value;
+            renderAccounts();
+        });
 
-                                <div class="level-progress">
-                                    <div class="level-labels">
-                                        <span style="color:var(--accent-cyan)">Level ${acc.level}</span>
-                                        <span style="color:var(--text-muted)">Matches: ${acc.matches_played}</span>
-                                    </div>
-                                    <div class="progress-bar-bg">
-                                        <div class="progress-bar-fill" style="width: ${Math.min(100, Math.max(15, (acc.current_exp % 1000) / 10))}%"></div>
-                                    </div>
-                                </div>
+        accountsContainer.addEventListener('click', (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button) return;
+            const uid = button.dataset.uid;
+            if (button.dataset.action === 'refresh') refreshAccount(uid);
+            if (button.dataset.action === 'delete') deleteAccount(uid);
+        });
 
-                                <div class="acc-actions">
-                                    <span>Last match: ${acc.last_match_time || 'Running...'}</span>
-                                    <div class="action-btns">
-                                        <button class="icon-btn" title="Refresh Profile/EXP" onclick="refreshAccountInfo('${acc.uid}')"><i class="fa-solid fa-rotate"></i></button>
-                                        <button class="icon-btn danger" title="Delete Account" onclick="deleteAccount('${acc.uid}')"><i class="fa-solid fa-trash"></i></button>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    }).join('');
-                }
+        $('#clear-local-logs').addEventListener('click', () => {
+            state.clearedLogSignature = logSignature(state.logs);
+            renderLogs();
+            toast('Log view cleared locally', 'info');
+        });
 
-                // Render Logs
-                const logContainer = document.getElementById('log-stream');
-                logContainer.innerHTML = data.logs.map(log => {
-                    return `<div class="log-item"><span class="log-time">[${log.time}]</span><span class="log-${log.level}">${escapeHtml(log.message)}</span></div>`;
-                }).join('');
-                logContainer.scrollTop = logContainer.scrollHeight;
-
-            } catch (err) {
-                console.error("Failed to fetch stats:", err);
-            }
-        }
-
-        function escapeHtml(text) {
-            if (!text) return '';
-            return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        }
-
-        // Uptime counter
-        setInterval(() => {
-            const sec = Math.floor((Date.now() - startTime) / 1000);
-            const h = String(Math.floor(sec / 3600)).padStart(2, '0');
-            const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
-            const s = String(sec % 60).padStart(2, '0');
-            document.getElementById('stat-uptime').innerText = `${h}:${m}:${s}`;
-        }, 1000);
-
-        // Live Poll every 2.5s
+        setInterval(updateUptime, 1000);
         fetchStats();
         setInterval(fetchStats, 2500);
     </script>

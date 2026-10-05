@@ -1,0 +1,8 @@
+# Local Python/runtime artifacts
+.venv/
+__pycache__/
+*.py[cod]
+
+# Bot runtime cache files
+token_cache.json
+devices.json

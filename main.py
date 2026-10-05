@@ -11,7 +11,9 @@ import os
 import uuid
 import itertools
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple, Any
+from urllib.parse import urlparse
 
 if sys.platform == "win32":
     try:
@@ -34,12 +36,44 @@ import thunderFF_pb2
 from dashboard_server import bot_state, start_web_dashboard
 
 # ==================== CONFIGURATION ====================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 20335
-ACCOUNTS_FILE = "accounts.json"
-TOKEN_CACHE_FILE = "token_cache.json"
-DEVICES_FILE = "devices.json"  # 🔥 NEW: Persistent device storage
+ACCOUNTS_FILE = os.path.join(BASE_DIR, "accounts.json")
+TOKEN_CACHE_FILE = os.path.join(BASE_DIR, "token_cache.json")
+DEVICES_FILE = os.path.join(BASE_DIR, "devices.json")  # 🔥 Persistent device storage
 TOKEN_CACHE_TTL = 1200
+
+# Runtime login/version fallbacks. Environment variables let you update these
+# without editing code when the game bumps version or endpoint hosts.
+DEFAULT_RELEASE_VERSION = os.getenv("FF_RELEASE_VERSION", "OB55")
+DEFAULT_CLIENT_VERSION = os.getenv("FF_CLIENT_VERSION", "1.132.3")
+DEFAULT_APP_VERSION = os.getenv("FF_APP_VERSION", DEFAULT_CLIENT_VERSION)
+DEFAULT_MAJOR_LOGIN_URL = os.getenv("FF_MAJOR_LOGIN_URL", "https://loginbp.ggblueshark.com/")
+DEFAULT_MAJOR_LOGIN_URLS = os.getenv(
+    "FF_MAJOR_LOGIN_URLS",
+    "https://loginbp.ggblueshark.com/,https://loginbp.ppmainecoonghj.com/"
+)
+DEFAULT_TOKEN_GRANT_URLS = os.getenv(
+    "FF_TOKEN_GRANT_URLS",
+    "https://ffmconnect.live.gop.garenanow.com/oauth/guest/token/grant,"
+    "https://100067.connect.garena.com/oauth/guest/token/grant"
+)
+DEFAULT_TOKEN_INSPECT_URLS = os.getenv(
+    "FF_TOKEN_INSPECT_URLS",
+    "https://ffmconnect.live.gop.garenanow.com/oauth/token/inspect,"
+    "https://100067.connect.garena.com/oauth/token/inspect"
+)
+DEFAULT_CLIENT_URLS = os.getenv(
+    "FF_CLIENT_URLS",
+    "https://clientbp.ppmainecoonghj.com/,https://clientbp.ggpolarbear.com/,"
+    "https://client.ind.freefiremobile.com/,https://clientbp.common.ggbluefox.com/"
+)
+FF_PROXY = os.getenv("FF_PROXY", "").strip() or None
+# StartMatch uses a fixed TCP command prefix in the captured Lone Wolf packet.
+# Override only if you have a fresh capture proving a different prefix.
+STARTMATCH_PACKET_PREFIX = os.getenv("FF_STARTMATCH_PREFIX", "031400").strip() or "031400"
+MATCHMAKING_REGION = os.getenv("FF_MATCHMAKING_REGION", "EUROPE").strip() or "EUROPE"
 
 # 🔥 Match control
 START_MATCH_INTERVAL = 3.0
@@ -219,7 +253,9 @@ def optimize_udp_socket(sock: socket.socket):
 # ==================== NETWORK & CRYPTO ====================
 client = httpx.AsyncClient(
     verify=False,
-    timeout=10.0,
+    timeout=15.0,
+    proxy=FF_PROXY,
+    trust_env=True,
     limits=httpx.Limits(max_connections=100, max_keepalive_connections=50)
 )
 
@@ -232,7 +268,7 @@ headers = {
     'X-Unity-Version': '2018.4.12f1',
     'X-GA-SV': '1789535859',
     'X-GA': 'v1 1',
-    'ReleaseVersion': 'OB55'
+    'ReleaseVersion': DEFAULT_RELEASE_VERSION
 }
 
 AES_KEY = b'Yg&tc%DEuh6%Zc^8'
@@ -281,7 +317,7 @@ headers = {
     'X-Unity-Version': '2018.4.12f1',
     'X-GA-SV': '1789535859',
     'X-GA': 'v1 1',
-    'ReleaseVersion': 'OB55'
+    'ReleaseVersion': DEFAULT_RELEASE_VERSION
 }
 
 class Colors:
@@ -468,13 +504,152 @@ async def aes_encrypt(payload, key, iv):
     cipher = AES.new(key, AES.MODE_CBC, iv)
     return cipher.encrypt(pad(payload, AES.block_size))
 
+def _split_csv(value: str) -> List[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
+def _unique_keep_order(values: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def _tls_block_hint(error_text: str) -> str:
+    lowered = str(error_text or "").lower()
+    tls_closed = (
+        "tls/ssl connection has been closed" in lowered
+        or "ssl_error_syscall" in lowered
+        or "connection closed abruptly" in lowered
+        or "empty reply from server" in lowered
+    )
+    if not tls_closed:
+        return ""
+    return (
+        " Garena closed TLS before any HTTP response. This is usually a blocked/cloud IP "
+        "or network route issue, not a wrong UID/password. Try from Termux/local network "
+        "or set FF_PROXY=http://user:pass@host:port (SOCKS also works after installing requirements)."
+    )
+
+
+def _normalize_base_url(url: str, fallback: str = DEFAULT_MAJOR_LOGIN_URL) -> str:
+    """Return a safe base URL with scheme and trailing slash."""
+    value = str(url or fallback or "").strip()
+    if not value:
+        value = DEFAULT_MAJOR_LOGIN_URL
+    if not value.startswith(("http://", "https://")):
+        value = "https://" + value.lstrip("/")
+    return value.rstrip("/") + "/"
+
+
+def _normalize_endpoint_url(url: str, fallback: str = "") -> str:
+    value = str(url or fallback or "").strip()
+    if not value:
+        return ""
+    if not value.startswith(("http://", "https://")):
+        value = "https://" + value.lstrip("/")
+    return value
+
+
+def _host_from_url(url: str, fallback: str = "clientbp.ppmainecoonghj.com") -> str:
+    try:
+        parsed = urlparse(_normalize_endpoint_url(url) or _normalize_base_url(url))
+        return parsed.netloc or fallback
+    except Exception:
+        return fallback
+
+
+def _major_login_endpoint(base_url: str) -> str:
+    url = _normalize_endpoint_url(base_url, DEFAULT_MAJOR_LOGIN_URL)
+    if url.rstrip("/").endswith("/MajorLogin"):
+        return url.rstrip("/")
+    return _normalize_base_url(url) + "MajorLogin"
+
+
+def _candidate_major_login_urls(primary: str = "") -> List[str]:
+    candidates = []
+    if primary:
+        candidates.append(primary)
+    candidates.extend(_split_csv(DEFAULT_MAJOR_LOGIN_URLS))
+    candidates.append(DEFAULT_MAJOR_LOGIN_URL)
+    return _unique_keep_order([_major_login_endpoint(url) for url in candidates if url])
+
+
+def _candidate_client_base_urls(primary: str = "") -> List[str]:
+    candidates = []
+    if primary:
+        candidates.append(primary)
+    candidates.extend(_split_csv(DEFAULT_CLIENT_URLS))
+    return _unique_keep_order([_normalize_base_url(url) for url in candidates if url])
+
+
+def _binary_headers(release_version: Optional[str], url: str) -> Dict[str, str]:
+    req_headers = headers.copy()
+    req_headers.update({
+        "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 13; CPH2095 Build/RKQ1.211119.001)",
+        "Content-Type": "application/octet-stream",
+        "X-Unity-Version": "2018.4.11f1",
+        "ReleaseVersion": release_version or DEFAULT_RELEASE_VERSION,
+        "X-GA-SV": str(int(time.time())),
+        "Host": _host_from_url(url),
+    })
+    req_headers.pop("Expect", None)
+    return req_headers
+
+
+def _pb_varint(value: int) -> bytes:
+    value = int(value)
+    out = bytearray()
+    while True:
+        to_write = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(to_write | 0x80)
+        else:
+            out.append(to_write)
+            break
+    return bytes(out)
+
+
+def _pb_string(field_number: int, value: Any) -> bytes:
+    raw = str(value).encode("utf-8")
+    return _pb_varint((int(field_number) << 3) | 2) + _pb_varint(len(raw)) + raw
+
+
+async def build_minimal_majorlogin_payload(open_id, access_token, platform):
+    """OB55 fallback MajorLogin payload using only verified auth fields."""
+    try:
+        platform_str = str(platform or 4)
+        payload = (
+            _pb_string(22, open_id)
+            + _pb_string(23, platform_str)
+            + _pb_string(29, access_token)
+            + _pb_string(99, platform_str)
+        )
+        return await aes_encrypt(payload, AES_KEY, AES_IV)
+    except Exception as e:
+        print_error(f"[LOGIN] Could not build fallback MajorLogin payload: {e}")
+        return None
+
+
 async def get_playstore_version():
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: play_scraper('com.dts.freefireth', lang='hi', country='id')
-    )
-    return result.get("version")
+    try:
+        result = await loop.run_in_executor(
+            None,
+            lambda: play_scraper('com.dts.freefireth', lang='hi', country='id')
+        )
+        version = result.get("version") if isinstance(result, dict) else None
+        if version:
+            return version
+        print_warning(f"[VERSION] Play Store response missing version. Using fallback {DEFAULT_APP_VERSION}")
+    except Exception as e:
+        print_warning(f"[VERSION] Play Store lookup failed: {e}. Using fallback {DEFAULT_APP_VERSION}")
+    return DEFAULT_APP_VERSION
+
 
 async def version_config():
     app_version = await get_playstore_version()
@@ -492,20 +667,27 @@ async def version_config():
         server_url = data.get("server_url")
         remote_version = data.get("remote_version")
         latest_release_version = data.get("latest_release_version")
-        if not server_url or not remote_version or not latest_release_version:
-            return None
-        return latest_release_version, remote_version, server_url
-    except Exception:
-        return None
+        if server_url and remote_version and latest_release_version:
+            server_url = _normalize_base_url(server_url)
+            print_info(f"[VERSION] Release {latest_release_version}, client {remote_version}, login {server_url}")
+            return latest_release_version, remote_version, server_url
+        print_warning(f"[VERSION] Config response incomplete: {data}")
+    except Exception as e:
+        print_warning(f"[VERSION] Remote config failed: {e}")
+
+    fallback_url = _normalize_base_url(DEFAULT_MAJOR_LOGIN_URL)
+    print_warning(
+        f"[VERSION] Using fallback config: {DEFAULT_RELEASE_VERSION}, "
+        f"client {DEFAULT_CLIENT_VERSION}, login {fallback_url}"
+    )
+    return DEFAULT_RELEASE_VERSION, DEFAULT_CLIENT_VERSION, fallback_url
 
 async def get_access_token(uid, password):
-    url = "https://100067.connect.garena.com/oauth/guest/token/grant"
     hdrs = {
-        "Host": "100067.connect.garena.com",
-        "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 12; SM-G998B Build/SP1A.210812.016)",
+        "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 13; CPH2095 Build/RKQ1.211119.001)",
         "Content-Type": "application/x-www-form-urlencoded",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "close"
+        "Accept-Encoding": "gzip",
+        "Connection": "Keep-Alive"
     }
     data = {
         "uid": uid,
@@ -515,22 +697,79 @@ async def get_access_token(uid, password):
         "client_secret": "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
         "client_id": "100067"
     }
-    for attempt in range(5):
+    last_error = "unknown"
+    urls = _unique_keep_order([_normalize_endpoint_url(url) for url in _split_csv(DEFAULT_TOKEN_GRANT_URLS)])
+    for url in urls:
+        endpoint_headers = hdrs.copy()
+        endpoint_headers["Host"] = _host_from_url(url, "ffmconnect.live.gop.garenanow.com")
+        for attempt in range(1, 4):
+            try:
+                response = await client.post(url, headers=endpoint_headers, data=data)
+                if response.status_code == 200:
+                    response_data = response.json()
+                    open_id = response_data.get("open_id")
+                    access_token = response_data.get("access_token")
+                    platform = response_data.get("platform", 4)
+                    if open_id and access_token:
+                        print_success(f"[TOKEN] Guest token granted for UID {uid}")
+                        return open_id, access_token, platform
+                    last_error = f"token response missing open_id/access_token: {response_data}"
+                    print_warning(f"[TOKEN] {last_error}")
+                    break
+
+                body_preview = response.text[:180].replace("\n", " ")
+                last_error = f"{_host_from_url(url)} HTTP {response.status_code}: {body_preview}"
+                if response.status_code in (400, 401, 403):
+                    print_warning(f"[TOKEN] Endpoint rejected UID {uid}: {last_error}")
+                    break
+                if response.status_code == 429:
+                    print_warning(f"[TOKEN] Rate limited on {_host_from_url(url)}; retry {attempt}/3")
+                    await asyncio.sleep(min(6, attempt * 1.5))
+                    continue
+                print_warning(f"[TOKEN] Attempt {attempt}/3 failed: {last_error}")
+            except Exception as e:
+                last_error = f"{_host_from_url(url)}: {e}"
+                print_warning(f"[TOKEN] Attempt {attempt}/3 network error on {_host_from_url(url)}: {e}")
+            await asyncio.sleep(min(3, 0.5 * attempt))
+
+    print_error(f"[TOKEN] Could not get guest token for UID {uid}. Last error: {last_error}{_tls_block_hint(last_error)}")
+    return None
+
+
+async def inspect_access_token(access_token: str) -> Optional[Tuple[str, Any]]:
+    last_error = "unknown"
+    for base_url in _split_csv(DEFAULT_TOKEN_INSPECT_URLS):
+        url = _normalize_endpoint_url(base_url)
+        separator = "&" if "?" in url else "?"
+        inspect_url = f"{url}{separator}token={access_token}"
+        hdrs = {
+            "Accept-Encoding": "gzip",
+            "Connection": "Keep-Alive",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Host": _host_from_url(url, "ffmconnect.live.gop.garenanow.com"),
+            "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 13;en;US;)"
+        }
         try:
-            response = await client.post(url, headers=hdrs, data=data)
-            if response.status_code == 200:
-                response_data = response.json()
-                open_id = response_data.get("open_id")
-                access_token = response_data.get("access_token")
-                platform = response_data.get("platform", 4)
-                if open_id and access_token:
-                    return open_id, access_token, platform
-            if response.status_code == 429:
-                await asyncio.sleep(1)
+            resp = await client.get(inspect_url, headers=hdrs)
+            if resp.status_code != 200:
+                last_error = f"{_host_from_url(url)} HTTP {resp.status_code}: {resp.text[:160]}"
+                print_warning(f"[TOKEN] Token inspect endpoint failed: {last_error}")
                 continue
-        except Exception:
-            pass
-        await asyncio.sleep(0.5)
+            data = resp.json()
+            if 'error' in data:
+                last_error = str(data.get('error'))
+                print_warning(f"[TOKEN] Access token rejected by {_host_from_url(url)}: {last_error}")
+                continue
+            open_id = data.get('open_id')
+            platform = data.get('platform', 4)
+            if open_id:
+                return open_id, platform
+            last_error = f"inspect response missing open_id: {data}"
+            print_warning(f"[TOKEN] {last_error}")
+        except Exception as e:
+            last_error = f"{_host_from_url(url)}: {e}"
+            print_warning(f"[TOKEN] Token inspect network error on {_host_from_url(url)}: {e}")
+    print_error(f"[TOKEN] Could not inspect access token. Last error: {last_error}{_tls_block_hint(last_error)}")
     return None
 
 async def parse_results(parsed_results):
@@ -623,98 +862,351 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         
         payload = proto.SerializeToString()
         return await aes_encrypt(payload, AES_KEY, AES_IV)
-    except Exception:
+    except Exception as e:
+        print_error(f"[LOGIN] Could not build MajorLogin payload: {e}")
         return None
 
-async def send_majorlogin(data, release_version, server_url):
+def _read_pb_varint(buf: bytes, pos: int) -> Tuple[int, int]:
+    shift = 0
+    value = 0
+    while pos < len(buf):
+        b = buf[pos]
+        pos += 1
+        value |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return value, pos
+        shift += 7
+        if shift > 70:
+            raise ValueError("varint too long")
+    raise ValueError("truncated varint")
+
+
+def _scan_wire_fields(buf: bytes, max_fields: int = 240) -> List[Dict[str, Any]]:
+    fields: List[Dict[str, Any]] = []
+    pos = 0
     try:
-        url = f"{server_url}MajorLogin"
-        req_headers = headers.copy()
-        req_headers["ReleaseVersion"] = release_version
-        response = await client.post(url, headers=req_headers, data=data)
-        if response.status_code != 200:
-            return None
-        response_content = response.content
-        if len(response_content) < 40:
-            return None
-
-        # 1. Direct parse
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        try:
-            res_proto.ParseFromString(response_content)
-            if res_proto.region and res_proto.token:
-                return res_proto
-        except Exception:
-            pass
-
-        # 2. OB55 64-byte header offset check
-        if len(response_content) > 64:
-            try:
-                res_proto = thunderFF_pb2.MajorLoginRes()
-                res_proto.ParseFromString(response_content[64:])
-                if res_proto.region and res_proto.token:
-                    return res_proto
-            except Exception:
-                pass
-
-        # 3. Dynamic offset search for OB55 compatibility
-        for offset in range(min(128, len(response_content))):
-            try:
-                candidate = thunderFF_pb2.MajorLoginRes()
-                candidate.ParseFromString(response_content[offset:])
-                if candidate.region and candidate.token:
-                    return candidate
-            except Exception:
-                pass
-
-        res_proto = thunderFF_pb2.MajorLoginRes()
-        res_proto.ParseFromString(response_content)
-        return res_proto
-    except Exception:
-        return None
-
-async def send_getlogin(data, base_url, token, release_version):
-    try:
-        url = f"{base_url.rstrip('/')}/GetLoginData"
-        req_headers = headers.copy()
-        req_headers["ReleaseVersion"] = release_version
-        req_headers['Authorization'] = f"Bearer {token}"
-        req_headers['Host'] = "clientbp.ppmainecoonghj.com"
-        response = await client.post(url, headers=req_headers, data=data)
-        if response.status_code != 200:
-            return None
-        response_content = response.content
-
-        res_proto = thunderFF_pb2.GetLoginDataRes()
-        parsed_successfully = False
-        try:
-            res_proto.ParseFromString(response_content)
-            if res_proto.functional_addrs or res_proto.informational_addrs:
-                parsed_successfully = True
-        except Exception:
-            pass
-
-        if not parsed_successfully:
-            for offset in range(min(128, len(response_content))):
+        while pos < len(buf) and len(fields) < max_fields:
+            key, pos = _read_pb_varint(buf, pos)
+            field_no = key >> 3
+            wire = key & 7
+            if field_no <= 0:
+                break
+            item: Dict[str, Any] = {"field": field_no, "wire": wire}
+            if wire == 0:  # varint
+                value, pos = _read_pb_varint(buf, pos)
+                item["value"] = value
+            elif wire == 1:  # fixed64
+                if pos + 8 > len(buf):
+                    break
+                item["raw"] = buf[pos:pos + 8]
+                pos += 8
+            elif wire == 2:  # length-delimited
+                length, pos = _read_pb_varint(buf, pos)
+                if length < 0 or pos + length > len(buf):
+                    break
+                raw = buf[pos:pos + length]
+                pos += length
+                item["raw"] = raw
                 try:
-                    candidate = thunderFF_pb2.GetLoginDataRes()
-                    candidate.ParseFromString(response_content[offset:])
-                    if candidate.functional_addrs or candidate.informational_addrs:
-                        res_proto = candidate
-                        break
+                    text = raw.decode("utf-8")
+                    if all((ch.isprintable() or ch in "\r\n\t") for ch in text):
+                        item["text"] = text
                 except Exception:
                     pass
+            elif wire == 5:  # fixed32
+                if pos + 4 > len(buf):
+                    break
+                item["raw"] = buf[pos:pos + 4]
+                pos += 4
+            else:
+                break
+            fields.append(item)
+    except Exception:
+        pass
+    return fields
 
-        dict_res = {}
+
+def _decode_jwt_payload(token: str) -> Dict[str, Any]:
+    try:
+        import base64
+        parts = str(token).split('.')
+        if len(parts) < 2:
+            return {}
+        payload = parts[1]
+        payload += '=' * ((4 - len(payload) % 4) % 4)
+        decoded = base64.urlsafe_b64decode(payload.encode())
+        data = json.loads(decoded.decode("utf-8", errors="ignore"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _looks_like_jwt(text: str) -> bool:
+    text = str(text or "")
+    return text.startswith("eyJ") and text.count('.') >= 2 and len(text) > 80
+
+
+def _looks_like_region(text: str) -> bool:
+    text = str(text or "").strip().upper()
+    return 2 <= len(text) <= 8 and text.replace("_", "").isalpha()
+
+
+def _majorlogin_from_wire_fields(fields: List[Dict[str, Any]]) -> Optional[Any]:
+    texts = [(f["field"], f.get("text", ""), f.get("raw", b"")) for f in fields if f.get("text")]
+    varints = [(f["field"], int(f.get("value", 0))) for f in fields if f.get("wire") == 0]
+
+    token = ""
+    url = ""
+    region = ""
+    for field_no, text, _raw in texts:
+        if not token and _looks_like_jwt(text):
+            token = text
+        if not url and text.startswith("http") and "client" in text:
+            url = text
+        if not region and _looks_like_region(text) and text.upper() not in {"FREE", "FIRE", "ANDROID", "WIFI"}:
+            # Prefer the historical MajorLogin region field, but allow fallback.
+            if field_no == 2 or text.upper() in {"BD", "IND", "IN", "SG", "TH", "VN", "ID", "MY", "PK", "BR", "US", "EU", "ME"}:
+                region = "IND" if text.upper() == "IN" else text.upper()
+
+    # Prefer known fields first, then fall back to sane candidates.
+    account_id = 0
+    server_time = 0
+    for field_no, value in varints:
+        if field_no == 1 and value > 0:
+            account_id = value
+        if field_no == 21 and value > 0:
+            server_time = value
+    if not account_id:
+        for _field_no, value in varints:
+            if value > 1_000_000:
+                account_id = value
+                break
+    if not server_time:
+        now_year_2020 = 1_577_836_800
+        for _field_no, value in varints:
+            if now_year_2020 <= value <= 4_102_444_800:
+                server_time = value
+                break
+
+    # AES key and IV are known historical fields 22 and 23, both 16 bytes. If
+    # field numbers drift, pick the first two 16-byte non-text byte fields.
+    aes_ak = b""
+    iv_i = b""
+    sixteen_byte_fields = []
+    for f in fields:
+        raw = f.get("raw")
+        if f.get("wire") == 2 and isinstance(raw, (bytes, bytearray)) and len(raw) == 16:
+            sixteen_byte_fields.append((f["field"], bytes(raw)))
+            if f["field"] == 22:
+                aes_ak = bytes(raw)
+            elif f["field"] == 23:
+                iv_i = bytes(raw)
+    if not aes_ak and sixteen_byte_fields:
+        aes_ak = sixteen_byte_fields[0][1]
+    if not iv_i and len(sixteen_byte_fields) > 1:
+        iv_i = sixteen_byte_fields[1][1]
+
+    if token and not account_id:
+        payload = _decode_jwt_payload(token)
+        for key in ("account_id", "accountId", "uid", "sub"):
+            try:
+                if payload.get(key):
+                    account_id = int(str(payload[key]).strip())
+                    break
+            except Exception:
+                pass
+        if not region:
+            for key in ("lockRegion", "lock_region", "region"):
+                if payload.get(key):
+                    region = str(payload[key]).upper()
+                    break
+
+    if token and url and region and aes_ak and iv_i:
+        return SimpleNamespace(
+            account_id=account_id,
+            region=region,
+            token=token,
+            url=url,
+            server_time=server_time or int(time.time()),
+            aes_ak=aes_ak,
+            iv_i=iv_i,
+        )
+    return None
+
+
+def _wire_field_preview(field: Dict[str, Any]) -> str:
+    if field.get("wire") == 0:
+        return f"{field['field']}:varint({field.get('value')})"
+    if field.get("wire") != 2:
+        return f"{field['field']}:wire{field.get('wire')}"
+
+    raw = field.get("raw", b"")
+    text = field.get("text", "")
+    if _looks_like_jwt(text):
+        return f"{field['field']}:jwt(len={len(text)})"
+    if text.startswith("http"):
+        return f"{field['field']}:url({text[:36]})"
+    if text and len(text) <= 24:
+        return f"{field['field']}:str({text})"
+
+    nested = _scan_wire_fields(raw, max_fields=8) if isinstance(raw, (bytes, bytearray)) and raw else []
+    if nested:
+        nested_preview = ",".join(_wire_field_preview(item) for item in nested[:4])
+        return f"{field['field']}:nested({nested_preview})"
+
+    hex_preview = bytes(raw).hex()[:80] if isinstance(raw, (bytes, bytearray)) else ""
+    return f"{field['field']}:bytes({len(raw)},hex={hex_preview})"
+
+
+def _majorlogin_response_summary(response_content: bytes) -> str:
+    offset = 64 if len(response_content) > 64 else 0
+    fields = _scan_wire_fields(response_content[offset:])
+    if not fields:
+        return f"bytes={len(response_content)}, no decodable protobuf fields"
+    parts = [_wire_field_preview(f) for f in fields[:18]]
+    hint = ""
+    field_numbers = {f.get("field") for f in fields}
+    if 13 in field_numbers:
+        hint = (
+            " | field 13 present: MajorLogin returned tokenless status; "
+            "this usually means the guest token is valid but the FF account is "
+            "unregistered/restricted, or the current OB payload is rejected"
+        )
+    return f"bytes={len(response_content)}, offset={offset}, fields=[{', '.join(parts)}]{hint}"
+
+
+def _parse_majorlogin_response(response_content: bytes) -> Optional[Any]:
+    # OB55 responses observed in the wild use a 64-byte prefix. Keep dynamic
+    # fallback offsets because routing variants sometimes differ.
+    offsets = []
+    if len(response_content) > 64:
+        offsets.append(64)
+    offsets.append(0)
+    offsets.extend(range(1, min(128, len(response_content))))
+
+    for offset in _unique_keep_order(offsets):
+        if offset >= len(response_content):
+            continue
+        payload = response_content[offset:]
         try:
-            parsed = Parser().parse(response_content.hex())
-            dict_res = await parse_results(parsed)
+            candidate = thunderFF_pb2.MajorLoginRes()
+            candidate.ParseFromString(payload)
+            if candidate.region and candidate.token and candidate.url:
+                return candidate
         except Exception:
             pass
 
-        return res_proto, dict_res
-    except Exception:
+        fields = _scan_wire_fields(payload)
+        dynamic = _majorlogin_from_wire_fields(fields)
+        if dynamic:
+            return dynamic
+    return None
+
+
+async def send_majorlogin(data, release_version, server_url):
+    if not data:
+        print_error("[MAJORLOGIN] Empty encrypted payload; cannot login")
         return None
+
+    last_error = "unknown"
+    for url in _candidate_major_login_urls(server_url):
+        try:
+            req_headers = _binary_headers(release_version, url)
+            response = await client.post(url, headers=req_headers, data=data)
+            if response.status_code != 200:
+                preview = response.text[:180].replace("\n", " ")
+                last_error = f"{_host_from_url(url)} HTTP {response.status_code}: {preview}"
+                print_warning(f"[MAJORLOGIN] {last_error}")
+                continue
+            response_content = response.content
+            if len(response_content) < 40:
+                last_error = f"{_host_from_url(url)} short response ({len(response_content)} bytes)"
+                print_warning(f"[MAJORLOGIN] {last_error}")
+                continue
+
+            parsed = _parse_majorlogin_response(response_content)
+            if parsed:
+                print_success(f"[MAJORLOGIN] Login OK for account {parsed.account_id} ({parsed.region}) via {_host_from_url(url)}")
+                return parsed
+
+            summary = _majorlogin_response_summary(response_content)
+            last_error = f"{_host_from_url(url)} response did not contain token/region/server URL ({summary})"
+            print_warning(f"[MAJORLOGIN] {last_error}")
+        except Exception as e:
+            last_error = f"{_host_from_url(url)}: {e}"
+            print_warning(f"[MAJORLOGIN] Request failed on {_host_from_url(url)}: {e}")
+
+    print_error(f"[MAJORLOGIN] All endpoints failed. Last error: {last_error}{_tls_block_hint(last_error)}")
+    return None
+
+async def send_getlogin(data, base_url, token, release_version):
+    if not data or not token:
+        print_error("[GETLOGIN] Missing payload or bearer token")
+        return None
+
+    last_error = "unknown"
+    for safe_base in _candidate_client_base_urls(base_url):
+        try:
+            url = f"{safe_base.rstrip('/')}/GetLoginData"
+            req_headers = _binary_headers(release_version, url)
+            req_headers['Authorization'] = f"Bearer {token}"
+            response = await client.post(url, headers=req_headers, data=data)
+            if response.status_code != 200:
+                preview = response.text[:180].replace("\n", " ")
+                last_error = f"{_host_from_url(url)} HTTP {response.status_code}: {preview}"
+                print_warning(f"[GETLOGIN] {last_error}")
+                continue
+            response_content = response.content
+
+            res_proto = thunderFF_pb2.GetLoginDataRes()
+            parsed_successfully = False
+            try:
+                res_proto.ParseFromString(response_content)
+                if res_proto.functional_addrs or res_proto.informational_addrs:
+                    parsed_successfully = True
+            except Exception:
+                pass
+
+            if not parsed_successfully:
+                for offset in range(min(128, len(response_content))):
+                    try:
+                        candidate = thunderFF_pb2.GetLoginDataRes()
+                        candidate.ParseFromString(response_content[offset:])
+                        if candidate.functional_addrs or candidate.informational_addrs:
+                            res_proto = candidate
+                            parsed_successfully = True
+                            break
+                    except Exception:
+                        pass
+
+            dict_res = {}
+            try:
+                parsed = Parser().parse(response_content.hex())
+                dict_res = await parse_results(parsed)
+            except Exception:
+                pass
+
+            if parsed_successfully:
+                print_success(f"[GETLOGIN] Gateway info loaded via {_host_from_url(url)}")
+            else:
+                print_warning(f"[GETLOGIN] Parsed fallback fields only via {_host_from_url(url)}; gateway addresses may be missing")
+            return res_proto, dict_res
+        except Exception as e:
+            last_error = f"{_host_from_url(safe_base)}: {e}"
+            print_warning(f"[GETLOGIN] Request failed on {_host_from_url(safe_base)}: {e}")
+
+    print_error(f"[GETLOGIN] All endpoints failed. Last error: {last_error}{_tls_block_hint(last_error)}")
+    return None
+
+def _region_gateway_suffix(region: Any) -> str:
+    """Gateway packet suffix used by TCP/Lone Wolf packets for each lock region."""
+    reg = str(region or "BD").upper()
+    if reg == "BD":
+        return "19"
+    if reg in {"IND", "IN"}:
+        return "14"
+    return "15"
+
 
 async def build_tcp_startup_packet(account_id, token, server_time, key, iv, region="BD", typ='OnLine'):
     uid_hex = f"{int(account_id):016x}"
@@ -722,32 +1214,45 @@ async def build_tcp_startup_packet(account_id, token, server_time, key, iv, regi
     encode_token = token.encode()
     encrypted_packet = (await aes_encrypt(encode_token, key, iv)).hex()
     encrypted_packet_length = f"{len(encrypted_packet) // 2:08x}"
-    reg = str(region).upper() if region else "BD"
+    suffix = _region_gateway_suffix(region)
     if typ == 'OnLine':
-        prefix = '7119' if reg == 'BD' else ('7114' if reg == 'IND' else '7115')
-        return f"{prefix}{uid_hex}{timestamp_hex}00000000{encrypted_packet_length}{encrypted_packet}"
+        return f"71{suffix}{uid_hex}{timestamp_hex}00000000{encrypted_packet_length}{encrypted_packet}"
     else:  # ChaT / Informational
-        prefix = '9219' if reg == 'BD' else ('9214' if reg == 'IND' else '9215')
-        return f"{prefix}{uid_hex}{timestamp_hex}{encrypted_packet_length}{encrypted_packet}"
+        return f"92{suffix}{uid_hex}{timestamp_hex}{encrypted_packet_length}{encrypted_packet}"
 
 async def send_keep_alive(region="BD"):
     """Send 2-byte keep-alive pulse to maintain connection in OB55"""
     try:
-        reg = str(region).upper() if region else "BD"
-        ka_hex = "0219" if reg == "BD" else ("0214" if reg == "IND" else "0215")
-        return bytes.fromhex(ka_hex)
+        return bytes.fromhex(f"02{_region_gateway_suffix(region)}")
     except Exception:
         return bytes.fromhex("0219")
 
 
-async def start_game_lone_wolf(region, client_version, writer, key, iv):
+def _startmatch_prefix() -> str:
+    prefix = STARTMATCH_PACKET_PREFIX.lower().replace(" ", "")
+    if len(prefix) != 6:
+        print_warning(f"[LONE WOLF] Invalid FF_STARTMATCH_PREFIX={STARTMATCH_PACKET_PREFIX!r}; using 031400")
+        return "031400"
+    try:
+        bytes.fromhex(prefix)
+        return prefix
+    except ValueError:
+        print_warning(f"[LONE WOLF] Invalid FF_STARTMATCH_PREFIX={STARTMATCH_PACKET_PREFIX!r}; using 031400")
+        return "031400"
+
+
+async def start_game_lone_wolf(matchmaking_region, client_version, writer, key, iv):
     packet = bytes.fromhex("080112800a0a010b102b3a110a044944433110aa011a064555524f50453a100a044944433210311a064555524f504540014a0801090a0b1219202758016291090a8001303838463832424630324139363736373032303130313030303030303030303030303136303030313030313530303032323246393745454530463030303030303436373632353134303030303030303030303030303030303030303030303030303030303030303030303030303066663030303030303030636163666131366410241afb02735d5e571400024a775d45414d1a041b1c001f11010449715f4243481a001e1d071c1703004b1a4066785c524570735c51486775421b5c5a4c07504042685a63610816054e19025e75196001477c015165406370195f5547404e4550640103020f1304064863754268676c755f65576e40467e5f0a417a4701026d675d6e73670b1108495a4c6a0b78470b740065645e525a057258425f584a447d4e6759440c11044e7c596d7f4b625f7d04055a47505c4e1d6b5b4107447d7201057d7f0f14084e430457674f7e517d72015172415d027473577c4d615f79535256780911030f4d5e027a797f614165067806505d53777750475e75064257076500460817014e741e7e5078487e7a7c465e7669767153497064605a7376677773550d160148037e18675966787f4c42607a645f577e7b441b460776026b18685d0b110205490060020f70676175654674706671797f41067346677c4e06585e780f15074c57047b40517075415f6364027259674b5b0166407f7340600407770a22047a5d5c52300b3a0a167305067162727516134208312e3133302e3232480350015ae90403626253513635686e556f4e36416456324b796f566c636f477776484f624e56526c4d727073504b4f43654177616848494176795556497273743752737149734a7a786b3247525268377a2f637664626d504f6a73552f79626d38547a4c69586d2f474351696d494b53486833447955726f39515152756c34545350626d6d624b7949565937545671577059455372323646572f59624578507338514f706d317372785455736c30796a434144444d4f34616a654b615753366361496c554b4963797a494e396d52516f715277687939797257476d337a644345337a6a61436f492f5a585233656f65365a42647a64677654636b6b665733356e4d4c6a6a565072564b6433523172756174394e50514150724a5546627859696c4c5a3859707336654d5447666b6649793574666a526c314d4648706b51774c6373374439656378566c41636f374e664f6d2b30654756466c4434744478706771385533595973587645384842502f70666c767a737138316a32524f4d7857437556445442492f684735625462773166456e4249725162762b636144775147696f74554e316d4c4b77734379456f4766706746614251457645672b736a764c4c78704743334c304a5344532f74526169504354553344374e6249306547516651622f5a466f4c36455630775a324d6f583932414c572f5049752f56634663584e70596b356f7966326151416a536971486a2f363276354843644f525551303578754e6171795251625653704654303137655237675255636b4966366c6f447476342b514e4a4670766d74757077707774396a5a5974437a4b56743657726d6e36785837706658456251555434684f3758a201050803108703a201050804108103a20105080510c001a20105081d10cc01a2010408161078a20105080e10af01a201020815")
     proto = thunderFF_pb2.StartMatch()
     proto.ParseFromString(packet)
-    if hasattr(proto.main, 'region_list') and len(proto.main.region_list) > 0:
-        proto.main.region_list[0].region = region
+    # This captured Lone Wolf packet uses matchmaking shard "EUROPE". Replacing
+    # it with the account lock region (BD/IND/etc.) makes the functional gateway
+    # close immediately after StartMatch. Keep EUROPE by default, but allow an
+    # override for future captures.
+    if matchmaking_region and hasattr(proto.main, 'region_list') and len(proto.main.region_list) > 0:
+        proto.main.region_list[0].region = matchmaking_region
         if len(proto.main.region_list) > 1:
-            proto.main.region_list[1].region = region
+            proto.main.region_list[1].region = matchmaking_region
     if hasattr(proto.main, 'client_version'):
         proto.main.client_version.remote_version = client_version
     packet = proto.SerializeToString()
@@ -755,9 +1260,11 @@ async def start_game_lone_wolf(region, client_version, writer, key, iv):
     packet_length = len(encrypted_packet) // 2
     hex_length = hex(packet_length)[2:]
     hex_length = hex_length if len(hex_length) > 1 else "0" + hex_length
-    final_packet = "031400" + "0" * (6 - len(hex_length)) + hex_length + encrypted_packet
+    gateway_prefix = _startmatch_prefix()
+    final_packet = gateway_prefix + "0" * (6 - len(hex_length)) + hex_length + encrypted_packet
     writer.write(bytes.fromhex(final_packet))
     await writer.drain()
+    return packet_length, gateway_prefix, matchmaking_region
 
 async def has_ssan_zig(n):
     z = (n << 1) & 0xFFFFFFFFFFFFFFFF
@@ -1368,9 +1875,11 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                 writer.write(bytes.fromhex(current_token))
                 await writer.drain()
 
-                # Send initial keepalive pulse right after connecting in OB55
+                # Send initial keepalive pulse right after connecting in OB55.
+                # Use the same lock region that StartMatch will use.
                 try:
-                    init_ka = await send_keep_alive(account_region)
+                    ka_region = str((current_account_data or {}).get('region') or account_region or "BD").upper()
+                    init_ka = await send_keep_alive(ka_region)
                     if init_ka and writer and not writer.is_closing():
                         writer.write(init_ka)
                         await asyncio.wait_for(writer.drain(), timeout=3)
@@ -1382,18 +1891,31 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                 no_response_count = 0
                 last_start_time = 0.0
 
+                def effective_region() -> str:
+                    region = account_region
+                    if current_account_data:
+                        region = current_account_data.get('region') or region
+                    return str(region or "BD").upper()
+
                 async def send_start_match():
                     nonlocal search_attempts, last_start_time
                     search_attempts += 1
-                    current_region = "BD"
-                    print_info(f"[LONE WOLF] Sending StartMatch #{search_attempts} region: {current_region}")
+                    current_region = effective_region()
+                    print_info(
+                        f"[LONE WOLF] Sending StartMatch #{search_attempts} "
+                        f"account_region={current_region}, matchmaking_region={MATCHMAKING_REGION}"
+                    )
                     try:
                         await asyncio.sleep(random.uniform(0.3, 0.6))
-                        await start_game_lone_wolf(
-                            current_region, client_version, writer,
+                        sent_len, gateway_prefix, matchmaking_region = await start_game_lone_wolf(
+                            MATCHMAKING_REGION, client_version, writer,
                             current_key, current_iv
                         )
-                        print_success("[LONE WOLF] StartMatch packet sent")
+                        print_success(
+                            f"[LONE WOLF] StartMatch packet sent "
+                            f"(account_region={current_region}, matchmaking_region={matchmaking_region}, "
+                            f"prefix={gateway_prefix}, encrypted={sent_len} bytes)"
+                        )
                         active = await _get_match_count(uid_str)
                         try:
                             bot_state.update_status(uid_str, "SEARCHING", active)
@@ -1476,10 +1998,11 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                 acc_tok = ""
                                 if current_account_data:
                                     acc_tok = current_account_data.get('access_token', '') or ""
+                                match_region = effective_region()
                                 thunder, sharma = await build_match_startup_packets(
                                     token, udp_key, match_code, effective_acc_id, block_val or 0,
                                     server_ip=server_ip_port,
-                                    region=account_region,
+                                    region=match_region,
                                     client_version=client_version,
                                     access_token=acc_tok
                                 )
@@ -1503,7 +2026,7 @@ async def functional_lone_wolf(addrs, starter_packet, account_region, client_ver
                                         udp_key,
                                         match_code,
                                         effective_acc_id,
-                                        "BD",
+                                        match_region,
                                         client_version,
                                         current_key,
                                         current_iv,
@@ -1701,6 +2224,27 @@ async def informational(addrs, starter_packet, key, iv, region="BD", max_reconne
 
 # ==================== ACCOUNT PROCESSORS ====================
 
+def _track_worker_aliases(task: Optional[asyncio.Task], *aliases: Any):
+    """Map every useful user/account id to the same running worker task."""
+    if task is None:
+        return
+    for alias in aliases:
+        if alias is None:
+            continue
+        key = str(alias).strip()
+        if key:
+            bot_state.account_workers[key] = task
+
+
+def _forget_worker_aliases(task: Optional[asyncio.Task]):
+    """Remove stale aliases when a worker exits or is cancelled."""
+    if task is None:
+        return
+    for key, worker in list(bot_state.account_workers.items()):
+        if worker is task:
+            bot_state.account_workers.pop(key, None)
+
+
 def _register_credentials(account_data: Dict):
     try:
         acc_id = str(account_data['account_id'])
@@ -1708,7 +2252,10 @@ def _register_credentials(account_data: Dict):
         if account_data.get('auth_uid'):
             bot_state.account_credentials[str(account_data['auth_uid'])] = account_data
         if account_data.get('auth_token'):
-            bot_state.account_credentials[f"tok_{account_data['auth_token'][:20]}"] = account_data
+            auth_token = str(account_data['auth_token'])
+            bot_state.account_credentials[auth_token] = account_data
+            bot_state.account_credentials[auth_token[:10]] = account_data
+            bot_state.account_credentials[f"tok_{auth_token[:20]}"] = account_data
     except Exception:
         pass
 
@@ -1753,6 +2300,53 @@ async def refresh_account_profile(account_data_or_uid: Any):
         print_error(f"refresh_account_profile error: {e}")
 
 
+async def _majorlogin_with_fallbacks(open_id: str, access_token: str, platform: Any,
+                                     client_version: str, release_version: str,
+                                     server_url: str, device_info: Dict[str, Any],
+                                     label: str) -> Tuple[Optional[Any], Optional[bytes]]:
+    # Some token-grant responses report a platform value that MajorLogin no
+    # longer accepts for OB55. Try the reported platform first, then the
+    # verified guest defaults from current OB55 profiles.
+    platform_candidates: List[Any] = []
+    seen_platforms = set()
+    for candidate in (platform, "4", 4, "1", 1):
+        key = str(candidate)
+        if key not in seen_platforms:
+            seen_platforms.add(key)
+            platform_candidates.append(candidate)
+
+    payloads: List[Tuple[str, bytes]] = []
+    seen_payloads = set()
+    for candidate_platform in platform_candidates:
+        full_payload = await build_majorlogin_payload(
+            open_id, access_token, candidate_platform, client_version, device_info
+        )
+        if full_payload and full_payload not in seen_payloads:
+            seen_payloads.add(full_payload)
+            payloads.append((f"full(platform={candidate_platform})", full_payload))
+
+        minimal_payload = await build_minimal_majorlogin_payload(open_id, access_token, candidate_platform)
+        if minimal_payload and minimal_payload not in seen_payloads:
+            seen_payloads.add(minimal_payload)
+            payloads.append((f"minimal(platform={candidate_platform})", minimal_payload))
+
+    for index, (payload_name, payload) in enumerate(payloads, start=1):
+        if index > 1:
+            print_warning(f"[LOGIN] Retrying MajorLogin for {label} with {payload_name} OB55 payload")
+        majorlogin_response = await send_majorlogin(payload, release_version, server_url)
+        if majorlogin_response:
+            if index > 1:
+                print_success(f"[LOGIN] {payload_name} OB55 payload worked for {label}")
+            return majorlogin_response, payload
+
+    print_error(
+        f"[LOGIN] MajorLogin returned no JWT after {len(payloads)} payload variants for {label}. "
+        "If logs keep showing fields 13/15 only, this specific guest account is likely "
+        "not game-registered/restricted, or a fresh OB55 request template is required."
+    )
+    return None, None
+
+
 async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
     cached = cache_get(uid)
     if cached:
@@ -1773,23 +2367,28 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
     try:
         verconfig_res = await version_config()
         if verconfig_res is None:
+            print_error(f"[LOGIN] Version configuration unavailable for UID {uid}")
             return None
         release_version, client_version, server_url = verconfig_res
         
         tokengrant_response = await get_access_token(uid, password)
         if tokengrant_response is None:
+            print_error(f"[LOGIN] Guest token step failed for UID {uid}")
             return None
         open_id, access_token, platform = tokengrant_response
         
         # 🔥 1ta id 1ta Device Injection
         device_info = get_device_for_account(uid)
         
-        login_payload_data = await build_majorlogin_payload(open_id, access_token, platform, client_version, device_info)
-        majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
-        if majorlogin_response is None:
+        majorlogin_response, login_payload_data = await _majorlogin_with_fallbacks(
+            open_id, access_token, platform, client_version, release_version, server_url, device_info, uid
+        )
+        if majorlogin_response is None or not login_payload_data:
+            print_error(f"[LOGIN] MajorLogin step failed for UID {uid}")
             return None
         getlogin_result = await send_getlogin(login_payload_data, majorlogin_response.url, majorlogin_response.token, release_version)
         if getlogin_result is None:
+            print_error(f"[LOGIN] GetLoginData step failed for UID {uid}")
             return None
         res_proto, dict_res = getlogin_result
 
@@ -1855,39 +2454,23 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
     try:
         verconfig_res = await version_config()
         if verconfig_res is None:
+            print_error("[LOGIN] Version configuration unavailable for access-token login")
             return None
         release_version, client_version, server_url = verconfig_res
 
-        import requests
-        url = f"https://100067.connect.garena.com/oauth/token/inspect?token={access_token}"
-        hdrs = {
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "close",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Host": "100067.connect.garena.com",
-            "User-Agent": "GarenaMSDK/4.0.19P4(G011A ;Android 9;en;US;)"
-        }
-        resp = await asyncio.to_thread(requests.get, url, headers=hdrs, timeout=10)
-        data = resp.json()
-
-        if 'error' in data:
+        inspect_result = await inspect_access_token(access_token)
+        if inspect_result is None:
             return None
-
-        open_id = data.get('open_id')
-        platform = data.get('platform', 4)
-
-        if not open_id:
-            return None
+        open_id, platform = inspect_result
 
         # 🔥 1ta id 1ta Device Injection (using unique open_id as the key)
         device_info = get_device_for_account(open_id)
 
-        login_payload_data = await build_majorlogin_payload(open_id, access_token, str(platform), client_version, device_info)
-        if not login_payload_data:
-            return None
-
-        majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
-        if majorlogin_response is None:
+        majorlogin_response, login_payload_data = await _majorlogin_with_fallbacks(
+            open_id, access_token, platform, client_version, release_version, server_url, device_info, "access-token login"
+        )
+        if majorlogin_response is None or not login_payload_data:
+            print_error("[LOGIN] MajorLogin step failed for access-token login")
             return None
 
         getlogin_result = await send_getlogin(
@@ -1897,6 +2480,7 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
             release_version
         )
         if getlogin_result is None:
+            print_error("[LOGIN] GetLoginData step failed for access-token login")
             return None
 
         res_proto, dict_res = getlogin_result
@@ -1945,8 +2529,16 @@ async def run_account_worker(account_data: Dict, label: str):
     acc_id = str(account_data['account_id'])
     informational_task = None
     exp_task = None
+    functional_task = None
     try:
         reg = account_data.get('region', 'BD')
+        functional_addrs = str(account_data.get('functional_addrs') or '').strip()
+        informational_addrs = str(account_data.get('informational_addrs') or '').strip()
+        if ':' not in functional_addrs:
+            raise ConnectionError(f"Missing functional gateway address for {label}")
+
+        bot_state.update_status(acc_id, "ONLINE", 0)
+
         tcp_packet_online = await build_tcp_startup_packet(
             account_data['account_id'],
             account_data['token'],
@@ -1957,25 +2549,28 @@ async def run_account_worker(account_data: Dict, label: str):
             typ='OnLine'
         )
 
-        tcp_packet_chat = await build_tcp_startup_packet(
-            account_data['account_id'],
-            account_data['token'],
-            account_data['server_time'],
-            account_data['aes_ak'],
-            account_data['iv_i'],
-            region=reg,
-            typ='ChaT'
-        )
-
-        informational_task = asyncio.create_task(
-            informational(
-                account_data['informational_addrs'],
-                tcp_packet_chat,
+        tcp_packet_chat = None
+        if ':' in informational_addrs:
+            tcp_packet_chat = await build_tcp_startup_packet(
+                account_data['account_id'],
+                account_data['token'],
+                account_data['server_time'],
                 account_data['aes_ak'],
                 account_data['iv_i'],
-                region=reg
+                region=reg,
+                typ='ChaT'
             )
-        )
+            informational_task = asyncio.create_task(
+                informational(
+                    informational_addrs,
+                    tcp_packet_chat,
+                    account_data['aes_ak'],
+                    account_data['iv_i'],
+                    region=reg
+                )
+            )
+        else:
+            print_warning(f"[INFO] Missing informational gateway for {label}; continuing without chat socket")
 
         async def exp_refresher():
             while True:
@@ -1988,7 +2583,7 @@ async def run_account_worker(account_data: Dict, label: str):
 
         functional_task = asyncio.create_task(
             functional_lone_wolf(
-                account_data['functional_addrs'],
+                functional_addrs,
                 tcp_packet_online,
                 account_data['region'],
                 account_data['client_version'],
@@ -2002,14 +2597,22 @@ async def run_account_worker(account_data: Dict, label: str):
         await functional_task
 
     except asyncio.CancelledError:
+        try:
+            bot_state.update_status(acc_id, "OFFLINE", 0)
+        except Exception:
+            pass
         raise
     except Exception as e:
+        try:
+            bot_state.update_status(acc_id, "ERROR", 0)
+        except Exception:
+            pass
         print_error(f"run_account_worker error for {label}: {e}")
     finally:
-        for t in (informational_task, exp_task):
+        for t in (informational_task, exp_task, functional_task):
             if t and not t.done():
                 t.cancel()
-        for t in (informational_task, exp_task):
+        for t in (informational_task, exp_task, functional_task):
             if t:
                 try:
                     await t
@@ -2018,59 +2621,85 @@ async def run_account_worker(account_data: Dict, label: str):
 
 
 async def account_loop_guest(uid: str, password: str):
-    while True:
-        try:
-            print_info(f"[LOGIN] Starting login for Guest UID: {uid}...")
+    current_task = asyncio.current_task()
+    _track_worker_aliases(current_task, uid)
+    try:
+        while True:
             try:
-                bot_state.update_status(str(uid), "CONNECTING")
-            except Exception:
-                pass
-            account_data = await process_account_uid_pass(uid, password)
-            if not account_data:
-                print_error(f"Login failed for UID: {uid}. Retrying in 15 seconds...")
+                print_info(f"[LOGIN] Starting login for Guest UID: {uid}...")
                 try:
-                    bot_state.update_status(str(uid), "ERROR")
+                    bot_state.update_status(str(uid), "CONNECTING")
                 except Exception:
                     pass
-                await asyncio.sleep(15)
-                continue
+                account_data = await process_account_uid_pass(uid, password)
+                if not account_data:
+                    print_error(f"Login failed for UID: {uid}. Retrying in 15 seconds...")
+                    try:
+                        bot_state.update_status(str(uid), "ERROR")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(15)
+                    continue
 
-            await run_account_worker(account_data, uid)
-            print_warning(f"Session finished for {uid}. Reconnecting in 3s...")
-            await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            print_warning(f"Worker for {uid} stopped.")
-            try:
-                bot_state.update_status(str(uid), "OFFLINE")
-            except Exception:
-                pass
-            break
-        except Exception as e:
-            print_error(f"Error for UID {uid}: {e}. Retrying in 10s...")
-            await asyncio.sleep(10)
+                acc_id = str(account_data.get('account_id', uid))
+                if acc_id != str(uid):
+                    bot_state.remove_account_state(str(uid))
+                _track_worker_aliases(current_task, uid, acc_id, account_data.get('auth_uid'))
+                await run_account_worker(account_data, uid)
+                print_warning(f"Session finished for {uid}. Reconnecting in 3s...")
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                print_warning(f"Worker for {uid} stopped.")
+                try:
+                    bot_state.update_status(str(uid), "OFFLINE")
+                    if uid in bot_state.account_credentials:
+                        acc_id = str(bot_state.account_credentials[uid].get('account_id', ''))
+                        if acc_id:
+                            bot_state.update_status(acc_id, "OFFLINE")
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                print_error(f"Error for UID {uid}: {e}. Retrying in 10s...")
+                await asyncio.sleep(10)
+    finally:
+        _forget_worker_aliases(current_task)
 
 
 async def account_loop_token(token: str):
     token_label = token[:10]
-    while True:
-        try:
-            print_info("[LOGIN] Starting login with Access Token...")
-            account_data = await process_account_token(token)
-            if not account_data:
-                print_error("Login failed for Token. Retrying in 15 seconds...")
-                await asyncio.sleep(15)
-                continue
+    cache_key = f"tok_{token[:20]}"
+    current_task = asyncio.current_task()
+    _track_worker_aliases(current_task, token_label, cache_key)
+    try:
+        while True:
+            try:
+                print_info("[LOGIN] Starting login with Access Token...")
+                account_data = await process_account_token(token)
+                if not account_data:
+                    print_error("Login failed for Token. Retrying in 15 seconds...")
+                    await asyncio.sleep(15)
+                    continue
 
-            acc_id = str(account_data['account_id'])
-            await run_account_worker(account_data, acc_id)
-            print_warning("Token session finished. Reconnecting in 3s...")
-            await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            print_warning(f"Worker for token {token_label} stopped.")
-            break
-        except Exception as e:
-            print_error(f"Token error: {e}. Retrying in 10s...")
-            await asyncio.sleep(10)
+                acc_id = str(account_data['account_id'])
+                _track_worker_aliases(current_task, token_label, cache_key, acc_id)
+                await run_account_worker(account_data, acc_id)
+                print_warning("Token session finished. Reconnecting in 3s...")
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                print_warning(f"Worker for token {token_label} stopped.")
+                try:
+                    account_data = bot_state.account_credentials.get(cache_key) or bot_state.account_credentials.get(token_label)
+                    if account_data and account_data.get('account_id'):
+                        bot_state.update_status(str(account_data['account_id']), "OFFLINE")
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                print_error(f"Token error: {e}. Retrying in 10s...")
+                await asyncio.sleep(10)
+    finally:
+        _forget_worker_aliases(current_task)
 
 
 # ==================== ACCOUNTS LOADER ====================
@@ -2107,10 +2736,13 @@ async def main():
     print_info(f"Cache TTL: {TOKEN_CACHE_TTL}s ({TOKEN_CACHE_TTL//60} min)")
     print_info(f"Priority Regions: {PRIORITY_REGIONS}")
     print_info("Device System: 1 ID = 1 Persistent Device ID (devices.json)")
+    if FF_PROXY:
+        print_info("Network Proxy: enabled via FF_PROXY")
     print_colored("=" * 60, Colors.CYAN)
 
+    dashboard_runner = None
     try:
-        await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
+        dashboard_runner = await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
         print_success(f"Web Dashboard live at http://localhost:{WEB_PORT}")
     except Exception as e:
         print_error(f"Could not start web dashboard: {e}")
@@ -2118,13 +2750,22 @@ async def main():
     async def on_account_added_handler(data):
         if "token" in data and data["token"]:
             t = str(data["token"]).strip()
+            token_key = f"tok_{t[:20]}"
+            existing = bot_state.account_workers.get(token_key) or bot_state.account_workers.get(t[:10])
+            if existing and not existing.done():
+                print_warning(f"Worker already running for token {t[:10]}...")
+                return
             task = asyncio.create_task(account_loop_token(t))
-            bot_state.account_workers[t[:10]] = task
+            _track_worker_aliases(task, token_key, t[:10])
         elif "uid" in data and "password" in data:
             u = str(data["uid"]).strip()
             p = str(data["password"]).strip()
+            existing = bot_state.account_workers.get(u)
+            if existing and not existing.done():
+                print_warning(f"Worker already running for UID {u}")
+                return
             task = asyncio.create_task(account_loop_guest(u, p))
-            bot_state.account_workers[u] = task
+            _track_worker_aliases(task, u)
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
@@ -2140,21 +2781,26 @@ async def main():
 
     for acc in accounts:
         if "token" in acc and acc["token"]:
-            t = asyncio.create_task(account_loop_token(acc["token"]))
-            bot_state.account_workers[acc["token"][:10]] = t
+            token = str(acc["token"])
+            task = asyncio.create_task(account_loop_token(token))
+            _track_worker_aliases(task, f"tok_{token[:20]}", token[:10])
         elif "uid" in acc and "password" in acc and acc["uid"]:
             u = str(acc["uid"])
-            t = asyncio.create_task(account_loop_guest(u, acc["password"]))
-            bot_state.account_workers[u] = t
+            task = asyncio.create_task(account_loop_guest(u, acc["password"]))
+            _track_worker_aliases(task, u)
 
     try:
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, asyncio.CancelledError):
         print_warning("\n[STOP] Shutting down all accounts...")
-        for t in list(bot_state.account_workers.values()):
-            t.cancel()
-        await asyncio.gather(*bot_state.account_workers.values(), return_exceptions=True)
+        tasks = list({task for task in bot_state.account_workers.values()})
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if dashboard_runner is not None:
+            await dashboard_runner.cleanup()
+        await client.aclose()
         print_success("All sessions cleanly closed.")
 
 
