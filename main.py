@@ -1034,32 +1034,44 @@ def _majorlogin_from_wire_fields(fields: List[Dict[str, Any]]) -> Optional[Any]:
     return None
 
 
+def _wire_field_preview(field: Dict[str, Any]) -> str:
+    if field.get("wire") == 0:
+        return f"{field['field']}:varint({field.get('value')})"
+    if field.get("wire") != 2:
+        return f"{field['field']}:wire{field.get('wire')}"
+
+    raw = field.get("raw", b"")
+    text = field.get("text", "")
+    if _looks_like_jwt(text):
+        return f"{field['field']}:jwt(len={len(text)})"
+    if text.startswith("http"):
+        return f"{field['field']}:url({text[:36]})"
+    if text and len(text) <= 24:
+        return f"{field['field']}:str({text})"
+
+    nested = _scan_wire_fields(raw, max_fields=8) if isinstance(raw, (bytes, bytearray)) and raw else []
+    if nested:
+        nested_preview = ",".join(_wire_field_preview(item) for item in nested[:4])
+        return f"{field['field']}:nested({nested_preview})"
+
+    hex_preview = bytes(raw).hex()[:80] if isinstance(raw, (bytes, bytearray)) else ""
+    return f"{field['field']}:bytes({len(raw)},hex={hex_preview})"
+
+
 def _majorlogin_response_summary(response_content: bytes) -> str:
     offset = 64 if len(response_content) > 64 else 0
     fields = _scan_wire_fields(response_content[offset:])
     if not fields:
         return f"bytes={len(response_content)}, no decodable protobuf fields"
-    parts = []
-    for f in fields[:18]:
-        if f.get("wire") == 0:
-            parts.append(f"{f['field']}:varint")
-        elif f.get("wire") == 2:
-            raw = f.get("raw", b"")
-            text = f.get("text", "")
-            if _looks_like_jwt(text):
-                parts.append(f"{f['field']}:jwt(len={len(text)})")
-            elif text.startswith("http"):
-                parts.append(f"{f['field']}:url")
-            elif text and len(text) <= 16:
-                parts.append(f"{f['field']}:str({text})")
-            else:
-                parts.append(f"{f['field']}:bytes({len(raw)})")
-        else:
-            parts.append(f"{f['field']}:wire{f.get('wire')}")
+    parts = [_wire_field_preview(f) for f in fields[:18]]
     hint = ""
     field_numbers = {f.get("field") for f in fields}
     if 13 in field_numbers:
-        hint = " | field 13 present: MajorLogin returned tokenless status; account may be unregistered/banned or payload rejected"
+        hint = (
+            " | field 13 present: MajorLogin returned tokenless status; "
+            "this usually means the guest token is valid but the FF account is "
+            "unregistered/restricted, or the current OB payload is rejected"
+        )
     return f"bytes={len(response_content)}, offset={offset}, fields=[{', '.join(parts)}]{hint}"
 
 
@@ -2292,24 +2304,46 @@ async def _majorlogin_with_fallbacks(open_id: str, access_token: str, platform: 
                                      client_version: str, release_version: str,
                                      server_url: str, device_info: Dict[str, Any],
                                      label: str) -> Tuple[Optional[Any], Optional[bytes]]:
-    full_payload = await build_majorlogin_payload(open_id, access_token, platform, client_version, device_info)
-    fallback_payload = await build_minimal_majorlogin_payload(open_id, access_token, platform)
+    # Some token-grant responses report a platform value that MajorLogin no
+    # longer accepts for OB55. Try the reported platform first, then the
+    # verified guest defaults from current OB55 profiles.
+    platform_candidates: List[Any] = []
+    seen_platforms = set()
+    for candidate in (platform, "4", 4, "1", 1):
+        key = str(candidate)
+        if key not in seen_platforms:
+            seen_platforms.add(key)
+            platform_candidates.append(candidate)
 
-    payloads = []
-    if full_payload:
-        payloads.append(("full", full_payload))
-    if fallback_payload:
-        payloads.append(("minimal", fallback_payload))
+    payloads: List[Tuple[str, bytes]] = []
+    seen_payloads = set()
+    for candidate_platform in platform_candidates:
+        full_payload = await build_majorlogin_payload(
+            open_id, access_token, candidate_platform, client_version, device_info
+        )
+        if full_payload and full_payload not in seen_payloads:
+            seen_payloads.add(full_payload)
+            payloads.append((f"full(platform={candidate_platform})", full_payload))
 
-    for payload_name, payload in payloads:
-        if payload_name != "full":
+        minimal_payload = await build_minimal_majorlogin_payload(open_id, access_token, candidate_platform)
+        if minimal_payload and minimal_payload not in seen_payloads:
+            seen_payloads.add(minimal_payload)
+            payloads.append((f"minimal(platform={candidate_platform})", minimal_payload))
+
+    for index, (payload_name, payload) in enumerate(payloads, start=1):
+        if index > 1:
             print_warning(f"[LOGIN] Retrying MajorLogin for {label} with {payload_name} OB55 payload")
         majorlogin_response = await send_majorlogin(payload, release_version, server_url)
         if majorlogin_response:
-            if payload_name != "full":
+            if index > 1:
                 print_success(f"[LOGIN] {payload_name} OB55 payload worked for {label}")
             return majorlogin_response, payload
 
+    print_error(
+        f"[LOGIN] MajorLogin returned no JWT after {len(payloads)} payload variants for {label}. "
+        "If logs keep showing fields 13/15 only, this specific guest account is likely "
+        "not game-registered/restricted, or a fresh OB55 request template is required."
+    )
     return None, None
 
 
